@@ -3,6 +3,8 @@ project(game LANGUAGES C VERSION 0.1.0)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g")
+
 find_package(glfw3 3.3 REQUIRED)
 find_package(Vulkan REQUIRED)
 find_package(cglm REQUIRED)
