@@ -1,3 +1,4 @@
+#define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_core.h>
@@ -43,6 +44,7 @@ typedef struct {
 
 typedef struct {
     GLFWwindow *window;
+    VkSurfaceKHR surface;
 
     VkInstance instance;
 
@@ -60,6 +62,7 @@ static void main_loop(Application *app);
 static void cleanup(Application *app);
 static void create_instance(Application *app);
 static void setup_debug_messenger(Application *app);
+static void create_surface(Application *app);
 static void pick_physical_device(Application *app);
 static void create_logical_device(Application *app);
 static int rate_device_suitability(VkPhysicalDevice device);
@@ -125,6 +128,7 @@ static void init_window(Application *app) {
 static void init_vulkan(Application *app) {
     create_instance(app);
     setup_debug_messenger(app);
+    create_surface(app);
     pick_physical_device(app);
     create_logical_device(app);
 }
@@ -137,6 +141,8 @@ static void main_loop(Application *app) {
 
 static void cleanup(Application *app) {
     vkDestroyDevice(app->device, NULL);
+
+    vkDestroySurfaceKHR(app->instance, app->surface, NULL);
 
     if (enable_validation_layers) {
         destroy_debug_utils_messenger_ext(app->instance, app->debug_messenger,
@@ -198,6 +204,11 @@ static void setup_debug_messenger(Application *app) {
                                               &app->debug_messenger));
 }
 
+static void create_surface(Application *app) {
+    VK_CHECK(glfwCreateWindowSurface(app->instance, app->window, NULL,
+                                     &app->surface));
+}
+
 static void pick_physical_device(Application *app) {
     app->physical_device = VK_NULL_HANDLE;
 
@@ -205,7 +216,7 @@ static void pick_physical_device(Application *app) {
     vkEnumeratePhysicalDevices(app->instance, &device_count, NULL);
 
     if (device_count == 0) {
-        fprintf(stderr, "failed to find GPU with vulkan support");
+        fprintf(stderr, "failed to find GPU with vulkan support\n");
         exit(EXIT_FAILURE);
     }
 
