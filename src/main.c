@@ -49,6 +49,9 @@ typedef struct {
     VkDebugUtilsMessengerEXT debug_messenger;
 
     VkPhysicalDevice physical_device;
+    VkDevice device;
+
+    VkQueue graphics_queue;
 } Application;
 
 static void init_window(Application *app);
@@ -58,6 +61,7 @@ static void cleanup(Application *app);
 static void create_instance(Application *app);
 static void setup_debug_messenger(Application *app);
 static void pick_physical_device(Application *app);
+static void create_logical_device(Application *app);
 static int rate_device_suitability(VkPhysicalDevice device);
 static QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
 static bool queue_family_indices_is_complete(QueueFamilyIndices indices);
@@ -122,6 +126,7 @@ static void init_vulkan(Application *app) {
     create_instance(app);
     setup_debug_messenger(app);
     pick_physical_device(app);
+    create_logical_device(app);
 }
 
 static void main_loop(Application *app) {
@@ -131,6 +136,8 @@ static void main_loop(Application *app) {
 }
 
 static void cleanup(Application *app) {
+    vkDestroyDevice(app->device, NULL);
+
     if (enable_validation_layers) {
         destroy_debug_utils_messenger_ext(app->instance, app->debug_messenger,
                                           NULL);
@@ -219,6 +226,41 @@ static void pick_physical_device(Application *app) {
         fprintf(stderr, "failed to find suitable GPU");
         exit(EXIT_FAILURE);
     }
+}
+
+static void create_logical_device(Application *app) {
+    QueueFamilyIndices indices = findQueueFamilies(app->physical_device);
+
+    float queue_priority = 1.0f;
+    VkDeviceQueueCreateInfo queue_create_info = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .queueFamilyIndex = indices.graphics_family,
+        .queueCount = 1,
+        .pQueuePriorities = &queue_priority,
+    };
+
+    VkPhysicalDeviceFeatures device_features = {0};
+
+    VkDeviceCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .pQueueCreateInfos = &queue_create_info,
+        .queueCreateInfoCount = 1,
+        .pEnabledFeatures = &device_features,
+        .enabledExtensionCount = 0,
+    };
+
+    if (enable_validation_layers) {
+        create_info.enabledLayerCount = validation_layer_count;
+        create_info.ppEnabledLayerNames = validation_layers;
+    } else {
+        create_info.enabledLayerCount = 0;
+    }
+
+    VK_CHECK(
+        vkCreateDevice(app->physical_device, &create_info, NULL, &app->device));
+
+    vkGetDeviceQueue(app->device, indices.graphics_family, 0,
+                     &app->graphics_queue);
 }
 
 static int rate_device_suitability(VkPhysicalDevice device) {
