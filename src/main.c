@@ -37,11 +37,18 @@ const char *validation_layers[] = {"VK_LAYER_KHRONOS_validation"};
     }
 
 typedef struct {
+    uint32_t graphics_family;
+    bool has_graphics_family;
+} QueueFamilyIndices;
+
+typedef struct {
     GLFWwindow *window;
 
     VkInstance instance;
 
     VkDebugUtilsMessengerEXT debug_messenger;
+
+    VkPhysicalDevice physical_device;
 } Application;
 
 static void init_window(Application *app);
@@ -50,6 +57,10 @@ static void main_loop(Application *app);
 static void cleanup(Application *app);
 static void create_instance(Application *app);
 static void setup_debug_messenger(Application *app);
+static void pick_physical_device(Application *app);
+static int rate_device_suitability(VkPhysicalDevice device);
+static QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
+static bool queue_family_indices_is_complete(QueueFamilyIndices indices);
 static bool check_validation_layer_support();
 static void populate_debug_messenger_create_info(
     VkDebugUtilsMessengerCreateInfoEXT *create_info);
@@ -72,6 +83,7 @@ VkResult create_debug_utils_messenger_ext(
         return VK_ERROR_EXTENSION_NOT_PRESENT;
     }
 }
+
 void destroy_debug_utils_messenger_ext(
     VkInstance instance, VkDebugUtilsMessengerEXT debugMessenger,
     const VkAllocationCallbacks *pAllocator) {
@@ -109,6 +121,7 @@ static void init_window(Application *app) {
 static void init_vulkan(Application *app) {
     create_instance(app);
     setup_debug_messenger(app);
+    pick_physical_device(app);
 }
 
 static void main_loop(Application *app) {
@@ -176,6 +189,94 @@ static void setup_debug_messenger(Application *app) {
 
     VK_CHECK(create_debug_utils_messenger_ext(app->instance, &create_info, NULL,
                                               &app->debug_messenger));
+}
+
+static void pick_physical_device(Application *app) {
+    app->physical_device = VK_NULL_HANDLE;
+
+    uint32_t device_count;
+    vkEnumeratePhysicalDevices(app->instance, &device_count, NULL);
+
+    if (device_count == 0) {
+        fprintf(stderr, "failed to find GPU with vulkan support");
+        exit(EXIT_FAILURE);
+    }
+
+    VkPhysicalDevice devices[device_count];
+    vkEnumeratePhysicalDevices(app->instance, &device_count, devices);
+
+    int max_rating = 0;
+    for (uint32_t i = 0; i < device_count; ++i) {
+        int rating;
+        if ((rating = rate_device_suitability(devices[i])) > max_rating) {
+            app->physical_device = devices[i];
+            max_rating = rating;
+            break;
+        }
+    }
+
+    if (app->physical_device == VK_NULL_HANDLE) {
+        fprintf(stderr, "failed to find suitable GPU");
+        exit(EXIT_FAILURE);
+    }
+}
+
+static int rate_device_suitability(VkPhysicalDevice device) {
+    VkPhysicalDeviceProperties device_properties;
+    vkGetPhysicalDeviceProperties(device, &device_properties);
+
+    VkPhysicalDeviceFeatures device_features;
+    vkGetPhysicalDeviceFeatures(device, &device_features);
+
+    QueueFamilyIndices indices = findQueueFamilies(device);
+
+    if (!queue_family_indices_is_complete(indices)) {
+        return -1;
+    }
+
+    if (!device_features.geometryShader) {
+        return -1;
+    }
+
+    int score = 0;
+
+    if (device_properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+        score += 10000;
+    }
+
+    // Maximum possible size of textures.
+    score += device_properties.limits.maxImageDimension2D;
+
+    printf("%-40s | %d\n", device_properties.deviceName, score);
+    return score;
+}
+
+static QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
+    QueueFamilyIndices indices;
+
+    uint32_t queue_family_count;
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, NULL);
+
+    VkQueueFamilyProperties queue_families[queue_family_count];
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count,
+                                             queue_families);
+
+    for (uint32_t i = 0; i < queue_family_count; ++i) {
+        if (queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+            indices.graphics_family = i;
+            indices.has_graphics_family = true;
+        }
+
+        if (queue_family_indices_is_complete(indices)) {
+            break;
+        }
+    }
+
+    return indices;
+}
+
+static bool queue_family_indices_is_complete(QueueFamilyIndices indices) {
+    return indices.has_graphics_family;
 }
 
 static bool check_validation_layer_support() {
