@@ -73,8 +73,9 @@ typedef struct {
     VkQueue present_queue;
 
     VkSwapchainKHR swapchain;
-    VkImage *swapchain_images;
     uint32_t swapchain_image_count;
+    VkImage *swapchain_images;
+    VkImageView *swapchain_image_views;
     VkFormat swapchain_image_format;
     VkExtent2D swapchain_extent;
 } Application;
@@ -89,6 +90,7 @@ static void create_surface(Application *app);
 static void pick_physical_device(Application *app);
 static void create_logical_device(Application *app);
 static void create_swapchain(Application *app);
+static void create_image_views(Application *app);
 static int rate_device_suitability(Application *app, VkPhysicalDevice device);
 static QueueFamilyIndices findQueueFamilies(Application *app,
                                             VkPhysicalDevice device);
@@ -169,6 +171,7 @@ static void init_vulkan(Application *app) {
     pick_physical_device(app);
     create_logical_device(app);
     create_swapchain(app);
+    create_image_views(app);
 }
 
 static void main_loop(Application *app) {
@@ -178,6 +181,10 @@ static void main_loop(Application *app) {
 }
 
 static void cleanup(Application *app) {
+    for (int i = 0; i < app->swapchain_image_count; i++) {
+        vkDestroyImageView(app->device, app->swapchain_image_views[i], NULL);
+    }
+
     vkDestroySwapchainKHR(app->device, app->swapchain, NULL);
 
     vkDestroyDevice(app->device, NULL);
@@ -378,6 +385,32 @@ static void create_swapchain(Application *app) {
 
     app->swapchain_image_format = surface_format.format;
     app->swapchain_extent = extent;
+}
+
+static void create_image_views(Application *app) {
+    app->swapchain_image_views =
+        calloc(app->swapchain_image_count, sizeof(VkImageView));
+
+    for (size_t i = 0; i < app->swapchain_image_count; i++) {
+        VkImageViewCreateInfo create_info = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = app->swapchain_images[i],
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = app->swapchain_image_format,
+            .components = {.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+                           .g = VK_COMPONENT_SWIZZLE_IDENTITY,
+                           .b = VK_COMPONENT_SWIZZLE_IDENTITY,
+                           .a = VK_COMPONENT_SWIZZLE_IDENTITY},
+            .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                 .baseMipLevel = 0,
+                                 .levelCount = 1,
+                                 .baseArrayLayer = 0,
+                                 .layerCount = 1},
+        };
+
+        VK_CHECK(vkCreateImageView(app->device, &create_info, NULL,
+                                   &app->swapchain_image_views[i]));
+    }
 }
 
 static int rate_device_suitability(Application *app, VkPhysicalDevice device) {
