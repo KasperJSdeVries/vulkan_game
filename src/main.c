@@ -127,6 +127,8 @@ static bool queue_family_indices_is_complete(QueueFamilyIndices indices);
 static uint32_t *queue_family_indices_get_unique(QueueFamilyIndices indices);
 static SwapchainSupportDetails query_swapchain_support(Application *app,
                                                        VkPhysicalDevice device);
+static void
+swapchain_support_details_destroy(SwapchainSupportDetails swapchain_support);
 static VkSurfaceFormatKHR
 choose_swap_surface_format(const VkSurfaceFormatKHR *available_formats,
                            uint32_t available_format_count);
@@ -327,6 +329,7 @@ static void create_instance(Application *app) {
     }
 
     VK_CHECK(vkCreateInstance(&create_info, NULL, &app->instance));
+    darray_destroy(required_extensions);
 }
 
 static void setup_debug_messenger(Application *app) {
@@ -474,6 +477,8 @@ static void create_swapchain(Application *app) {
 
     app->swapchain_image_format = surface_format.format;
     app->swapchain_extent = extent;
+
+    swapchain_support_details_destroy(swapchain_support);
 }
 
 static void create_image_views(Application *app) {
@@ -903,8 +908,10 @@ static int rate_device_suitability(Application *app, VkPhysicalDevice device) {
         query_swapchain_support(app, device);
     if (!swapchain_support.format_count ||
         !swapchain_support.present_mode_count) {
+        swapchain_support_details_destroy(swapchain_support);
         return -1;
     }
+    swapchain_support_details_destroy(swapchain_support);
 
     if (!device_features.geometryShader) {
         return -1;
@@ -1011,6 +1018,12 @@ query_swapchain_support(Application *app, VkPhysicalDevice device) {
     }
 
     return details;
+}
+
+static void
+swapchain_support_details_destroy(SwapchainSupportDetails swapchain_support) {
+    free(swapchain_support.present_modes);
+    free(swapchain_support.formats);
 }
 
 static VkSurfaceFormatKHR
