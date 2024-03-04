@@ -51,3 +51,4 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         )
 
 install(TARGETS ${PROJECT_NAME})
+install(DIRECTORY "$<TARGET_FILE_DIR:${PROJECT_NAME}>/shaders" TYPE DATA)
