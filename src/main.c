@@ -14,6 +14,7 @@
 
 #define WIDTH 1280
 #define HEIGHT 720
+#define MAX_FRAMES_IN_FLIGHT 2
 
 #define VK_CHECK(fun)                                                          \
     if (fun != VK_SUCCESS) {                                                   \
@@ -77,27 +78,48 @@ typedef struct {
     uint32_t swapchain_image_count;
     VkImage *swapchain_images;
     VkImageView *swapchain_image_views;
+    VkFramebuffer *swapchain_framebuffers;
     VkFormat swapchain_image_format;
     VkExtent2D swapchain_extent;
 
     VkRenderPass render_pass;
     VkPipelineLayout pipeline_layout;
     VkPipeline graphics_pipeline;
+
+    VkCommandPool command_pool;
+    VkCommandBuffer command_buffers[MAX_FRAMES_IN_FLIGHT];
+
+    VkSemaphore image_available_semaphores[MAX_FRAMES_IN_FLIGHT];
+    VkSemaphore render_finished_semaphores[MAX_FRAMES_IN_FLIGHT];
+    VkFence in_flight_fences[MAX_FRAMES_IN_FLIGHT];
+
+    uint32_t current_frame;
+    bool framebuffer_resized;
 } Application;
 
 static void init_window(Application *app);
 static void init_vulkan(Application *app);
 static void main_loop(Application *app);
 static void cleanup(Application *app);
+static void recreate_swapchain(Application *app);
 static void create_instance(Application *app);
 static void setup_debug_messenger(Application *app);
 static void create_surface(Application *app);
 static void pick_physical_device(Application *app);
 static void create_logical_device(Application *app);
+static void cleanup_swapchain(Application *app);
 static void create_swapchain(Application *app);
 static void create_image_views(Application *app);
 static void create_render_pass(Application *app);
 static void create_graphics_pipeline(Application *app);
+static void create_framebuffers(Application *app);
+static void create_command_pool(Application *app);
+static void create_command_buffers(Application *app);
+static void create_sync_objects(Application *app);
+static void record_command_buffer(const Application *app,
+                                  VkCommandBuffer command_buffer,
+                                  uint32_t image_index);
+static void draw_frame(Application *app);
 static int rate_device_suitability(Application *app, VkPhysicalDevice device);
 static QueueFamilyIndices findQueueFamilies(Application *app,
                                             VkPhysicalDevice device);
@@ -126,6 +148,8 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
     VkDebugUtilsMessageSeverityFlagsEXT message_severity,
     VkDebugUtilsMessageTypeFlagsEXT message_type,
     const VkDebugUtilsMessengerCallbackDataEXT *callback_data, void *user_data);
+static void framebuffer_resize_callback(GLFWwindow *window, int width,
+                                        int height);
 
 VkResult create_debug_utils_messenger_ext(
     VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT *pCreateInfo,
@@ -170,9 +194,10 @@ static void init_window(Application *app) {
     }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
     app->window = glfwCreateWindow(WIDTH, HEIGHT, "game", NULL, NULL);
+    glfwSetWindowUserPointer(app->window, app);
+    glfwSetFramebufferSizeCallback(app->window, framebuffer_resize_callback);
 }
 
 static void init_vulkan(Application *app) {
@@ -185,24 +210,38 @@ static void init_vulkan(Application *app) {
     create_image_views(app);
     create_render_pass(app);
     create_graphics_pipeline(app);
+    create_framebuffers(app);
+    create_command_pool(app);
+    create_command_buffers(app);
+    create_sync_objects(app);
 }
 
 static void main_loop(Application *app) {
     while (!glfwWindowShouldClose(app->window)) {
         glfwPollEvents();
+        draw_frame(app);
     }
+
+    vkDeviceWaitIdle(app->device);
 }
 
 static void cleanup(Application *app) {
+    cleanup_swapchain(app);
+
     vkDestroyPipeline(app->device, app->graphics_pipeline, NULL);
     vkDestroyPipelineLayout(app->device, app->pipeline_layout, NULL);
+
     vkDestroyRenderPass(app->device, app->render_pass, NULL);
 
-    for (int i = 0; i < app->swapchain_image_count; i++) {
-        vkDestroyImageView(app->device, app->swapchain_image_views[i], NULL);
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        vkDestroySemaphore(app->device, app->image_available_semaphores[i],
+                           NULL);
+        vkDestroySemaphore(app->device, app->render_finished_semaphores[i],
+                           NULL);
+        vkDestroyFence(app->device, app->in_flight_fences[i], NULL);
     }
 
-    vkDestroySwapchainKHR(app->device, app->swapchain, NULL);
+    vkDestroyCommandPool(app->device, app->command_pool, NULL);
 
     vkDestroyDevice(app->device, NULL);
 
@@ -218,6 +257,39 @@ static void cleanup(Application *app) {
     glfwDestroyWindow(app->window);
 
     glfwTerminate();
+}
+
+static void cleanup_swapchain(Application *app) {
+    for (int i = 0; i < app->swapchain_image_count; i++) {
+        vkDestroyFramebuffer(app->device, app->swapchain_framebuffers[i], NULL);
+    }
+
+    for (int i = 0; i < app->swapchain_image_count; i++) {
+        vkDestroyImageView(app->device, app->swapchain_image_views[i], NULL);
+    }
+
+    free(app->swapchain_images);
+    free(app->swapchain_image_views);
+    free(app->swapchain_framebuffers);
+
+    vkDestroySwapchainKHR(app->device, app->swapchain, NULL);
+}
+
+static void recreate_swapchain(Application *app) {
+    int width = 0, height = 0;
+    glfwGetFramebufferSize(app->window, &width, &height);
+    while (width == 0 || height == 0) {
+        glfwGetFramebufferSize(app->window, &width, &height);
+        glfwWaitEvents();
+    }
+
+    vkDeviceWaitIdle(app->device);
+
+    cleanup_swapchain(app);
+
+    create_swapchain(app);
+    create_image_views(app);
+    create_framebuffers(app);
 }
 
 static void create_instance(Application *app) {
@@ -453,12 +525,23 @@ static void create_render_pass(Application *app) {
         .pColorAttachments = &color_attachment_reference,
     };
 
+    VkSubpassDependency dependency = {
+        .srcSubpass = VK_SUBPASS_EXTERNAL,
+        .dstSubpass = 0,
+        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .srcAccessMask = 0,
+        .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+    };
+
     VkRenderPassCreateInfo render_pass_info = {
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
         .attachmentCount = 1,
         .pAttachments = &color_attachment,
         .subpassCount = 1,
         .pSubpasses = &subpass,
+        .dependencyCount = 1,
+        .pDependencies = &dependency,
     };
 
     VK_CHECK(vkCreateRenderPass(app->device, &render_pass_info, NULL,
@@ -610,6 +693,195 @@ static void create_graphics_pipeline(Application *app) {
     free(frag_shader_code);
 }
 
+static void create_framebuffers(Application *app) {
+    app->swapchain_framebuffers =
+        calloc(app->swapchain_image_count, sizeof(VkFramebuffer));
+
+    for (int i = 0; i < app->swapchain_image_count; i++) {
+        VkImageView attachments[] = {
+            app->swapchain_image_views[i],
+        };
+
+        VkFramebufferCreateInfo framebuffer_info = {
+            .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+            .renderPass = app->render_pass,
+            .attachmentCount = 1,
+            .pAttachments = attachments,
+            .width = app->swapchain_extent.width,
+            .height = app->swapchain_extent.height,
+            .layers = 1,
+        };
+
+        VK_CHECK(vkCreateFramebuffer(app->device, &framebuffer_info, NULL,
+                                     &app->swapchain_framebuffers[i]));
+    }
+}
+
+static void create_command_pool(Application *app) {
+    QueueFamilyIndices queue_family_indices =
+        findQueueFamilies(app, app->physical_device);
+
+    VkCommandPoolCreateInfo pool_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = queue_family_indices.graphics_family,
+    };
+
+    VK_CHECK(
+        vkCreateCommandPool(app->device, &pool_info, NULL, &app->command_pool));
+}
+
+static void create_command_buffers(Application *app) {
+    VkCommandBufferAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = app->command_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = MAX_FRAMES_IN_FLIGHT,
+    };
+
+    VK_CHECK(vkAllocateCommandBuffers(app->device, &alloc_info,
+                                      app->command_buffers));
+}
+
+static void create_sync_objects(Application *app) {
+    VkSemaphoreCreateInfo semaphore_info = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+    };
+
+    VkFenceCreateInfo fence_info = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+    };
+
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        VK_CHECK(vkCreateSemaphore(app->device, &semaphore_info, NULL,
+                                   &app->image_available_semaphores[i]));
+        VK_CHECK(vkCreateSemaphore(app->device, &semaphore_info, NULL,
+                                   &app->render_finished_semaphores[i]));
+        VK_CHECK(vkCreateFence(app->device, &fence_info, NULL,
+                               &app->in_flight_fences[i]));
+    }
+}
+
+static void record_command_buffer(const Application *app,
+                                  VkCommandBuffer command_buffer,
+                                  uint32_t image_index) {
+    VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+    };
+
+    VK_CHECK(vkBeginCommandBuffer(command_buffer, &begin_info));
+
+    VkClearValue clear_color = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+
+    VkRenderPassBeginInfo render_pass_info = {
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+        .renderPass = app->render_pass,
+        .framebuffer = app->swapchain_framebuffers[image_index],
+        .renderArea = {.offset = {0, 0}, .extent = app->swapchain_extent},
+        .clearValueCount = 1,
+        .pClearValues = &clear_color,
+    };
+
+    vkCmdBeginRenderPass(command_buffer, &render_pass_info,
+                         VK_SUBPASS_CONTENTS_INLINE);
+
+    vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      app->graphics_pipeline);
+
+    VkViewport viewport = {
+        .x = 0.0f,
+        .y = 0.0f,
+        .width = (float)app->swapchain_extent.width,
+        .height = (float)app->swapchain_extent.height,
+        .minDepth = 0.0f,
+        .maxDepth = 1.0f,
+    };
+    vkCmdSetViewport(command_buffer, 0, 1, &viewport);
+
+    VkRect2D scissor = {
+        .offset = {0, 0},
+        .extent = app->swapchain_extent,
+    };
+    vkCmdSetScissor(command_buffer, 0, 1, &scissor);
+
+    vkCmdDraw(command_buffer, 3, 1, 0, 0);
+
+    vkCmdEndRenderPass(command_buffer);
+
+    VK_CHECK(vkEndCommandBuffer(command_buffer));
+}
+
+static void draw_frame(Application *app) {
+    vkWaitForFences(app->device, 1, &app->in_flight_fences[app->current_frame],
+                    VK_TRUE, UINT64_MAX);
+
+    uint32_t image_index;
+    VkResult result = vkAcquireNextImageKHR(
+        app->device, app->swapchain, UINT64_MAX,
+        app->image_available_semaphores[app->current_frame], VK_NULL_HANDLE,
+        &image_index);
+
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+        recreate_swapchain(app);
+        return;
+    } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+        fprintf(stderr, "Failed to acquire swapchain image!\n");
+        exit(EXIT_FAILURE);
+    }
+
+    vkResetFences(app->device, 1, &app->in_flight_fences[app->current_frame]);
+
+    vkResetCommandBuffer(app->command_buffers[app->current_frame], 0);
+    record_command_buffer(app, app->command_buffers[app->current_frame],
+                          image_index);
+
+    VkSemaphore wait_semaphores[] = {
+        app->image_available_semaphores[app->current_frame]};
+    VkPipelineStageFlags wait_stages[] = {
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+
+    VkSemaphore signal_semaphores[] = {
+        app->render_finished_semaphores[app->current_frame]};
+
+    VkSubmitInfo submit_info = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = wait_semaphores,
+        .pWaitDstStageMask = wait_stages,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &app->command_buffers[app->current_frame],
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = signal_semaphores,
+    };
+
+    VK_CHECK(vkQueueSubmit(app->graphics_queue, 1, &submit_info,
+                           app->in_flight_fences[app->current_frame]));
+
+    VkSwapchainKHR swapchains[] = {app->swapchain};
+
+    VkPresentInfoKHR present_info = {
+        .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = signal_semaphores,
+        .swapchainCount = 1,
+        .pSwapchains = swapchains,
+        .pImageIndices = &image_index,
+        .pResults = NULL,
+    };
+
+    result = vkQueuePresentKHR(app->present_queue, &present_info);
+
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR ||
+        app->framebuffer_resized) {
+        app->framebuffer_resized = false;
+        recreate_swapchain(app);
+    } else
+        VK_CHECK(result);
+
+    app->current_frame = (app->current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+
 static int rate_device_suitability(Application *app, VkPhysicalDevice device) {
     VkPhysicalDeviceProperties device_properties;
     vkGetPhysicalDeviceProperties(device, &device_properties);
@@ -732,7 +1004,7 @@ query_swapchain_support(Application *app, VkPhysicalDevice device) {
 
     if (details.present_mode_count != 0) {
         details.present_modes =
-            calloc(details.format_count, sizeof(VkPresentModeKHR));
+            calloc(details.present_mode_count, sizeof(VkPresentModeKHR));
         vkGetPhysicalDeviceSurfacePresentModesKHR(device, app->surface,
                                                   &details.present_mode_count,
                                                   details.present_modes);
@@ -918,4 +1190,10 @@ debug_callback(VkDebugUtilsMessageSeverityFlagsEXT message_severity,
     fprintf(stderr, "validation layer: %s\n", callback_data->pMessage);
 
     return VK_FALSE;
+}
+
+static void framebuffer_resize_callback(GLFWwindow *window, int width,
+                                        int height) {
+    Application *app = (Application *)glfwGetWindowUserPointer(window);
+    app->framebuffer_resized = true;
 }
