@@ -1,5 +1,6 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <cglm/struct.h>
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_core.h>
 
@@ -44,6 +45,20 @@ const char *device_extenstions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
                 __FILE_NAME__, __LINE__);                                      \
         exit(EXIT_FAILURE);                                                    \
     }
+
+typedef struct {
+    vec2s position;
+    vec3s color;
+} Vertex;
+
+const Vertex vertices[] = {
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}},
+};
+
+const uint16_t indices[] = {0, 1, 2, 2, 3, 0};
 
 typedef struct {
     uint32_t graphics_family;
@@ -95,6 +110,11 @@ typedef struct {
 
     uint32_t current_frame;
     bool framebuffer_resized;
+
+    VkBuffer vertex_buffer;
+    VkDeviceMemory vertex_buffer_memory;
+    VkBuffer index_buffer;
+    VkDeviceMemory index_buffer_memory;
 } Application;
 
 static void init_window(Application *app);
@@ -114,6 +134,8 @@ static void create_render_pass(Application *app);
 static void create_graphics_pipeline(Application *app);
 static void create_framebuffers(Application *app);
 static void create_command_pool(Application *app);
+static void create_vertex_buffer(Application *app);
+static void create_index_buffer(Application *app);
 static void create_command_buffers(Application *app);
 static void create_sync_objects(Application *app);
 static void record_command_buffer(const Application *app,
@@ -137,6 +159,8 @@ choose_swap_present_mode(const VkPresentModeKHR *available_present_modes,
                          uint32_t available_present_mode_count);
 static VkExtent2D choose_swap_extent(Application *app,
                                      VkSurfaceCapabilitiesKHR capabilities);
+static VkVertexInputBindingDescription vertex_get_binding_description();
+static VkVertexInputAttributeDescription *vertex_get_attribute_descriptions();
 static bool check_validation_layer_support();
 static bool check_device_extension_support(VkPhysicalDevice device);
 static uint32_t *read_file(const char *file_name, size_t *out_size);
@@ -146,6 +170,9 @@ static VkShaderModule create_shader_module(const Application *app,
 static void populate_debug_messenger_create_info(
     VkDebugUtilsMessengerCreateInfoEXT *create_info);
 static const char **get_required_extensions();
+static uint32_t find_memory_type(VkPhysicalDevice physical_device,
+                                 uint32_t type_filter,
+                                 VkMemoryPropertyFlags properties);
 static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
     VkDebugUtilsMessageSeverityFlagsEXT message_severity,
     VkDebugUtilsMessageTypeFlagsEXT message_type,
@@ -214,6 +241,8 @@ static void init_vulkan(Application *app) {
     create_graphics_pipeline(app);
     create_framebuffers(app);
     create_command_pool(app);
+    create_vertex_buffer(app);
+    create_index_buffer(app);
     create_command_buffers(app);
     create_sync_objects(app);
 }
@@ -229,6 +258,12 @@ static void main_loop(Application *app) {
 
 static void cleanup(Application *app) {
     cleanup_swapchain(app);
+
+    vkDestroyBuffer(app->device, app->index_buffer, NULL);
+    vkFreeMemory(app->device, app->index_buffer_memory, NULL);
+
+    vkDestroyBuffer(app->device, app->vertex_buffer, NULL);
+    vkFreeMemory(app->device, app->vertex_buffer_memory, NULL);
 
     vkDestroyPipeline(app->device, app->graphics_pipeline, NULL);
     vkDestroyPipelineLayout(app->device, app->pipeline_layout, NULL);
@@ -583,10 +618,18 @@ static void create_graphics_pipeline(Application *app) {
     VkPipelineShaderStageCreateInfo shader_stages[] = {vert_shader_stage_info,
                                                        frag_shader_stage_info};
 
+    VkVertexInputBindingDescription binding_description =
+        vertex_get_binding_description();
+    VkVertexInputAttributeDescription *attribute_descriptions =
+        vertex_get_attribute_descriptions();
+
     VkPipelineVertexInputStateCreateInfo vertex_input_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-        .vertexBindingDescriptionCount = 0,
-        .vertexAttributeDescriptionCount = 0,
+        .vertexBindingDescriptionCount = 1,
+        .pVertexBindingDescriptions = &binding_description,
+        .vertexAttributeDescriptionCount =
+            darray_length(attribute_descriptions),
+        .pVertexAttributeDescriptions = attribute_descriptions,
     };
 
     VkPipelineInputAssemblyStateCreateInfo input_assembly = {
@@ -736,6 +779,132 @@ static void create_command_pool(Application *app) {
         vkCreateCommandPool(app->device, &pool_info, NULL, &app->command_pool));
 }
 
+static void create_buffer(const Application *app, VkDeviceSize size,
+                          VkBufferUsageFlags usage,
+                          VkMemoryPropertyFlags properties, VkBuffer *buffer,
+                          VkDeviceMemory *buffer_memory) {
+    VkBufferCreateInfo buffer_info = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = size,
+        .usage = usage,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+
+    VK_CHECK(vkCreateBuffer(app->device, &buffer_info, NULL, buffer));
+
+    VkMemoryRequirements memory_requirements;
+    vkGetBufferMemoryRequirements(app->device, *buffer, &memory_requirements);
+
+    VkMemoryAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = memory_requirements.size,
+        .memoryTypeIndex =
+            find_memory_type(app->physical_device,
+                             memory_requirements.memoryTypeBits, properties),
+    };
+
+    VK_CHECK(vkAllocateMemory(app->device, &alloc_info, NULL, buffer_memory));
+
+    vkBindBufferMemory(app->device, *buffer, *buffer_memory, 0);
+}
+
+static void copy_buffer(const Application *app, VkBuffer src_buffer,
+                        VkBuffer dst_buffer, VkDeviceSize size) {
+    VkCommandBufferAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandPool = app->command_pool,
+        .commandBufferCount = 1,
+    };
+
+    VkCommandBuffer command_buffer;
+    vkAllocateCommandBuffers(app->device, &alloc_info, &command_buffer);
+
+    VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+
+    vkBeginCommandBuffer(command_buffer, &begin_info);
+
+    VkBufferCopy copy_region = {
+        .srcOffset = 0,
+        .dstOffset = 0,
+        .size = size,
+    };
+
+    vkCmdCopyBuffer(command_buffer, src_buffer, dst_buffer, 1, &copy_region);
+
+    vkEndCommandBuffer(command_buffer);
+
+    VkSubmitInfo submit_info = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &command_buffer,
+    };
+
+    vkQueueSubmit(app->graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
+    vkQueueWaitIdle(app->graphics_queue);
+
+    vkFreeCommandBuffers(app->device, app->command_pool, 1, &command_buffer);
+}
+
+static void create_vertex_buffer(Application *app) {
+    VkDeviceSize buffer_size = sizeof(vertices);
+
+    VkBuffer staging_buffer;
+    VkDeviceMemory staging_buffer_memory;
+
+    create_buffer(app, buffer_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                  &staging_buffer, &staging_buffer_memory);
+
+    void *data;
+    vkMapMemory(app->device, staging_buffer_memory, 0, buffer_size, 0, &data);
+    memcpy(data, vertices, buffer_size);
+    vkUnmapMemory(app->device, staging_buffer_memory);
+
+    create_buffer(app, buffer_size,
+                  VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &app->vertex_buffer,
+                  &app->vertex_buffer_memory);
+
+    copy_buffer(app, staging_buffer, app->vertex_buffer, buffer_size);
+
+    vkDestroyBuffer(app->device, staging_buffer, NULL);
+    vkFreeMemory(app->device, staging_buffer_memory, NULL);
+}
+
+static void create_index_buffer(Application *app) {
+    VkDeviceSize buffer_size = sizeof(indices);
+
+    VkBuffer staging_buffer;
+    VkDeviceMemory staging_buffer_memory;
+
+    create_buffer(app, buffer_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                  &staging_buffer, &staging_buffer_memory);
+
+    void *data;
+    vkMapMemory(app->device, staging_buffer_memory, 0, buffer_size, 0, &data);
+    memcpy(data, indices, buffer_size);
+    vkUnmapMemory(app->device, staging_buffer_memory);
+
+    create_buffer(app, buffer_size,
+                  VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                      VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &app->index_buffer,
+                  &app->index_buffer_memory);
+
+    copy_buffer(app, staging_buffer, app->index_buffer, buffer_size);
+
+    vkDestroyBuffer(app->device, staging_buffer, NULL);
+    vkFreeMemory(app->device, staging_buffer_memory, NULL);
+}
+
 static void create_command_buffers(Application *app) {
     VkCommandBufferAllocateInfo alloc_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -810,7 +979,15 @@ static void record_command_buffer(const Application *app,
     };
     vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
-    vkCmdDraw(command_buffer, 3, 1, 0, 0);
+    VkBuffer vertex_buffers[] = {app->vertex_buffer};
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(command_buffer, 0, 1, vertex_buffers, offsets);
+
+    vkCmdBindIndexBuffer(command_buffer, app->index_buffer, 0,
+                         VK_INDEX_TYPE_UINT16);
+
+    vkCmdDrawIndexed(command_buffer, sizeof(indices) / sizeof(uint16_t), 1, 0,
+                     0, 0);
 
     vkCmdEndRenderPass(command_buffer);
 
@@ -1070,6 +1247,39 @@ static VkExtent2D choose_swap_extent(Application *app,
     return actual_extent;
 }
 
+static VkVertexInputBindingDescription vertex_get_binding_description() {
+    return (VkVertexInputBindingDescription){
+        .binding = 0,
+        .stride = sizeof(Vertex),
+        .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+    };
+}
+
+static VkVertexInputAttributeDescription *vertex_get_attribute_descriptions() {
+    VkVertexInputAttributeDescription *attribute_descriptions =
+        darray_create(VkVertexInputAttributeDescription);
+
+    VkVertexInputAttributeDescription attribute_description = {
+        .binding = 0,
+        .location = 0,
+        .format = VK_FORMAT_R32G32_SFLOAT,
+        .offset = offsetof(Vertex, position),
+    };
+
+    darray_push(attribute_descriptions, attribute_description);
+
+    attribute_description = (VkVertexInputAttributeDescription){
+        .binding = 0,
+        .location = 1,
+        .format = VK_FORMAT_R32G32B32_SFLOAT,
+        .offset = offsetof(Vertex, color),
+    };
+
+    darray_push(attribute_descriptions, attribute_description);
+
+    return attribute_descriptions;
+}
+
 static bool check_validation_layer_support() {
     uint32_t layer_count;
     vkEnumerateInstanceLayerProperties(&layer_count, NULL);
@@ -1193,6 +1403,24 @@ static const char **get_required_extensions() {
     }
 
     return required_extensions;
+}
+
+static uint32_t find_memory_type(VkPhysicalDevice physical_device,
+                                 uint32_t type_filter,
+                                 VkMemoryPropertyFlags properties) {
+    VkPhysicalDeviceMemoryProperties memory_properties;
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+
+    for (uint32_t i = 0; i < memory_properties.memoryTypeCount; i++) {
+        if ((type_filter & (1 << i)) &&
+            ((memory_properties.memoryTypes[i].propertyFlags & properties) ==
+             properties)) {
+            return i;
+        }
+    }
+
+    fprintf(stderr, "Failed to find suitable memory type\n");
+    exit(EXIT_FAILURE);
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL
