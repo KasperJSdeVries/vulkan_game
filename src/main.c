@@ -1,6 +1,18 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+
+#define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
+#include <cglm/cam.h>
+#include <cglm/cglm.h>
 #include <cglm/struct.h>
+#include <cglm/struct/mat4.h>
+#include <cglm/types-struct.h>
+#include <cglm/util.h>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb/stb_image.h>
+
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_core.h>
 
@@ -61,6 +73,12 @@ const Vertex vertices[] = {
 const uint16_t indices[] = {0, 1, 2, 2, 3, 0};
 
 typedef struct {
+    mat4s model;
+    mat4s view;
+    mat4s projection;
+} UniformBufferObject;
+
+typedef struct {
     uint32_t graphics_family;
     bool has_graphics_family;
     uint32_t present_family;
@@ -78,6 +96,9 @@ typedef struct {
 typedef struct {
     GLFWwindow *window;
     VkSurfaceKHR surface;
+
+    double time;
+    double delta_time;
 
     VkInstance instance;
 
@@ -101,6 +122,10 @@ typedef struct {
     VkPipelineLayout pipeline_layout;
     VkPipeline graphics_pipeline;
 
+    VkDescriptorSetLayout descriptor_set_layout;
+    VkDescriptorPool descriptor_pool;
+    VkDescriptorSet descriptor_sets[MAX_FRAMES_IN_FLIGHT];
+
     VkCommandPool command_pool;
     VkCommandBuffer command_buffers[MAX_FRAMES_IN_FLIGHT];
 
@@ -113,8 +138,13 @@ typedef struct {
 
     VkBuffer vertex_buffer;
     VkDeviceMemory vertex_buffer_memory;
+
     VkBuffer index_buffer;
     VkDeviceMemory index_buffer_memory;
+
+    VkBuffer uniform_buffers[MAX_FRAMES_IN_FLIGHT];
+    VkDeviceMemory uniform_buffers_memory[MAX_FRAMES_IN_FLIGHT];
+    void *uniform_buffers_mapped[MAX_FRAMES_IN_FLIGHT];
 } Application;
 
 static void init_window(Application *app);
@@ -131,16 +161,22 @@ static void cleanup_swapchain(Application *app);
 static void create_swapchain(Application *app);
 static void create_image_views(Application *app);
 static void create_render_pass(Application *app);
+static void create_descriptor_set_layout(Application *app);
 static void create_graphics_pipeline(Application *app);
 static void create_framebuffers(Application *app);
 static void create_command_pool(Application *app);
 static void create_vertex_buffer(Application *app);
 static void create_index_buffer(Application *app);
+static void create_uniform_buffer(Application *app);
+static void create_descriptor_pool(Application *app);
+static void create_descriptor_sets(Application *app);
 static void create_command_buffers(Application *app);
 static void create_sync_objects(Application *app);
 static void record_command_buffer(const Application *app,
                                   VkCommandBuffer command_buffer,
                                   uint32_t image_index);
+static void update_uniform_buffer(const Application *app,
+                                  uint32_t current_image);
 static void draw_frame(Application *app);
 static int rate_device_suitability(Application *app, VkPhysicalDevice device);
 static QueueFamilyIndices findQueueFamilies(Application *app,
@@ -238,19 +274,32 @@ static void init_vulkan(Application *app) {
     create_swapchain(app);
     create_image_views(app);
     create_render_pass(app);
+    create_descriptor_set_layout(app);
     create_graphics_pipeline(app);
     create_framebuffers(app);
     create_command_pool(app);
     create_vertex_buffer(app);
     create_index_buffer(app);
+    create_uniform_buffer(app);
+    create_descriptor_pool(app);
+    create_descriptor_sets(app);
     create_command_buffers(app);
     create_sync_objects(app);
 }
 
 static void main_loop(Application *app) {
+
+    double start_time = glfwGetTime();
+    double prev_frame_time = start_time;
     while (!glfwWindowShouldClose(app->window)) {
+        double current_time = glfwGetTime();
+        app->time = current_time - start_time;
+        app->delta_time = current_time - prev_frame_time;
+
         glfwPollEvents();
         draw_frame(app);
+
+        prev_frame_time = app->current_frame;
     }
 
     vkDeviceWaitIdle(app->device);
@@ -258,6 +307,15 @@ static void main_loop(Application *app) {
 
 static void cleanup(Application *app) {
     cleanup_swapchain(app);
+
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        vkDestroyBuffer(app->device, app->uniform_buffers[i], NULL);
+        vkFreeMemory(app->device, app->uniform_buffers_memory[i], NULL);
+    }
+
+    vkDestroyDescriptorPool(app->device, app->descriptor_pool, NULL);
+
+    vkDestroyDescriptorSetLayout(app->device, app->descriptor_set_layout, NULL);
 
     vkDestroyBuffer(app->device, app->index_buffer, NULL);
     vkFreeMemory(app->device, app->index_buffer_memory, NULL);
@@ -588,6 +646,25 @@ static void create_render_pass(Application *app) {
                                 &app->render_pass));
 }
 
+static void create_descriptor_set_layout(Application *app) {
+    VkDescriptorSetLayoutBinding uboLayoutBinding = {
+        .binding = 0,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .pImmutableSamplers = NULL,
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+    };
+
+    VkDescriptorSetLayoutCreateInfo layout_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 1,
+        .pBindings = &uboLayoutBinding,
+    };
+
+    VK_CHECK(vkCreateDescriptorSetLayout(app->device, &layout_info, NULL,
+                                         &app->descriptor_set_layout));
+}
+
 static void create_graphics_pipeline(Application *app) {
     size_t vert_shader_size;
     uint32_t *vert_shader_code =
@@ -680,7 +757,7 @@ static void create_graphics_pipeline(Application *app) {
         .polygonMode = VK_POLYGON_MODE_FILL,
         .lineWidth = 1.0f,
         .cullMode = VK_CULL_MODE_BACK_BIT,
-        .frontFace = VK_FRONT_FACE_CLOCKWISE,
+        .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
         .depthBiasEnable = VK_FALSE,
     };
 
@@ -706,6 +783,8 @@ static void create_graphics_pipeline(Application *app) {
 
     VkPipelineLayoutCreateInfo pipeline_layout_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1,
+        .pSetLayouts = &app->descriptor_set_layout,
     };
 
     VK_CHECK(vkCreatePipelineLayout(app->device, &pipeline_layout_info, NULL,
@@ -905,6 +984,74 @@ static void create_index_buffer(Application *app) {
     vkFreeMemory(app->device, staging_buffer_memory, NULL);
 }
 
+static void create_uniform_buffer(Application *app) {
+    VkDeviceSize buffer_size = sizeof(UniformBufferObject);
+
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        create_buffer(app, buffer_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                      &app->uniform_buffers[i],
+                      &app->uniform_buffers_memory[i]);
+        vkMapMemory(app->device, app->uniform_buffers_memory[i], 0, buffer_size,
+                    0, &app->uniform_buffers_mapped[i]);
+    }
+}
+
+static void create_descriptor_pool(Application *app) {
+    VkDescriptorPoolSize pool_size = {
+        .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = MAX_FRAMES_IN_FLIGHT,
+    };
+
+    VkDescriptorPoolCreateInfo pool_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .poolSizeCount = 1,
+        .pPoolSizes = &pool_size,
+        .maxSets = MAX_FRAMES_IN_FLIGHT,
+    };
+
+    VK_CHECK(vkCreateDescriptorPool(app->device, &pool_info, NULL,
+                                    &app->descriptor_pool));
+}
+
+static void create_descriptor_sets(Application *app) {
+    VkDescriptorSetLayout layouts[MAX_FRAMES_IN_FLIGHT];
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        layouts[i] = app->descriptor_set_layout;
+    }
+
+    VkDescriptorSetAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = app->descriptor_pool,
+        .descriptorSetCount = MAX_FRAMES_IN_FLIGHT,
+        .pSetLayouts = layouts,
+    };
+
+    VK_CHECK(vkAllocateDescriptorSets(app->device, &alloc_info,
+                                      app->descriptor_sets));
+
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        VkDescriptorBufferInfo buffer_info = {
+            .buffer = app->uniform_buffers[i],
+            .offset = 0,
+            .range = sizeof(UniformBufferObject),
+        };
+
+        VkWriteDescriptorSet descriptor_write = {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = app->descriptor_sets[i],
+            .dstBinding = 0,
+            .dstArrayElement = 0,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorCount = 1,
+            .pBufferInfo = &buffer_info,
+        };
+
+        vkUpdateDescriptorSets(app->device, 1, &descriptor_write, 0, NULL);
+    }
+}
+
 static void create_command_buffers(Application *app) {
     VkCommandBufferAllocateInfo alloc_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -986,12 +1133,35 @@ static void record_command_buffer(const Application *app,
     vkCmdBindIndexBuffer(command_buffer, app->index_buffer, 0,
                          VK_INDEX_TYPE_UINT16);
 
+    vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            app->pipeline_layout, 0, 1,
+                            &app->descriptor_sets[app->current_frame], 0, NULL);
+
     vkCmdDrawIndexed(command_buffer, sizeof(indices) / sizeof(uint16_t), 1, 0,
                      0, 0);
 
     vkCmdEndRenderPass(command_buffer);
 
     VK_CHECK(vkEndCommandBuffer(command_buffer));
+}
+
+static void update_uniform_buffer(const Application *app,
+                                  uint32_t current_image) {
+    UniformBufferObject ubo = {
+        .model = glms_rotate(glms_mat4_identity(), app->time * glm_rad(90.0f),
+                             (vec3s){0.0f, 0.0f, 1.0f}),
+        .view =
+            glms_lookat((vec3s){2.0f, 2.0f, 2.0f}, (vec3s){0.0f, 0.0f, 0.0f},
+                        (vec3s){0.0f, 0.0f, 1.0f}),
+        .projection = glms_perspective(glm_rad(45.0f),
+                                       (float)app->swapchain_extent.width /
+                                           (float)app->swapchain_extent.height,
+                                       0.1f, 10.0f),
+    };
+
+    ubo.projection.m11 *= -1;
+
+    memcpy(app->uniform_buffers_mapped[current_image], &ubo, sizeof(ubo));
 }
 
 static void draw_frame(Application *app) {
@@ -1017,6 +1187,8 @@ static void draw_frame(Application *app) {
     vkResetCommandBuffer(app->command_buffers[app->current_frame], 0);
     record_command_buffer(app, app->command_buffers[app->current_frame],
                           image_index);
+
+    update_uniform_buffer(app, app->current_frame);
 
     VkSemaphore wait_semaphores[] = {
         app->image_available_semaphores[app->current_frame]};

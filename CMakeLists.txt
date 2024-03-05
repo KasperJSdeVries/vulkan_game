@@ -38,7 +38,7 @@ add_custom_target(
 file(GLOB_RECURSE SOURCES "src/*.c")
 
 add_executable(${PROJECT_NAME} ${SOURCES})
-target_link_libraries(${PROJECT_NAME} glfw ${Vulkan_LIBRARY} cglm)
+target_link_libraries(${PROJECT_NAME} glfw ${Vulkan_LIBRARY} cglm m)
 target_include_directories(${PROJECT_NAME} PRIVATE ${Vulkan_INCLUDE_DIR})
 
 add_dependencies(${PROJECT_NAME} Shaders)
