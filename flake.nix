@@ -35,6 +35,7 @@
           glfw
           glslang
           shaderc
+          stb
           vulkan-extension-layer
           vulkan-headers
           vulkan-loader
@@ -43,6 +44,7 @@
         ];
 
         VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
+        STB_INCLUDE_PATH = "${pkgs.stb}/include/";
 
         mkDerivation = pkgs.stdenvNoCC.mkDerivation;
       in {
@@ -51,7 +53,7 @@
         };
 
         devShells.default = pkgs.mkShell {
-          inherit nativeBuildInputs buildInputs VK_LAYER_PATH;
+          inherit nativeBuildInputs buildInputs VK_LAYER_PATH STB_INCLUDE_PATH;
           inherit (self.checks.${system}.pre-commit-check) shellHook;
         };
 
