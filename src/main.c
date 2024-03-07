@@ -61,13 +61,14 @@ const char *device_extenstions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 typedef struct {
     vec2s position;
     vec3s color;
+    vec2s texture_coordinate;
 } Vertex;
 
 const Vertex vertices[] = {
-    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}},
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
 };
 
 const uint16_t indices[] = {0, 1, 2, 2, 3, 0};
@@ -145,6 +146,11 @@ typedef struct {
     VkBuffer uniform_buffers[MAX_FRAMES_IN_FLIGHT];
     VkDeviceMemory uniform_buffers_memory[MAX_FRAMES_IN_FLIGHT];
     void *uniform_buffers_mapped[MAX_FRAMES_IN_FLIGHT];
+
+    VkImage texture_image;
+    VkDeviceMemory texture_image_memory;
+    VkImageView texture_image_view;
+    VkSampler texture_sampler;
 } Application;
 
 static void init_window(Application *app);
@@ -165,6 +171,9 @@ static void create_descriptor_set_layout(Application *app);
 static void create_graphics_pipeline(Application *app);
 static void create_framebuffers(Application *app);
 static void create_command_pool(Application *app);
+static void create_texture_image(Application *app);
+static void create_texture_image_view(Application *app);
+static void create_texture_sampler(Application *app);
 static void create_vertex_buffer(Application *app);
 static void create_index_buffer(Application *app);
 static void create_uniform_buffer(Application *app);
@@ -203,6 +212,28 @@ static uint32_t *read_file(const char *file_name, size_t *out_size);
 static VkShaderModule create_shader_module(const Application *app,
                                            const uint32_t *code,
                                            size_t code_size);
+static void create_buffer(const Application *app, VkDeviceSize size,
+                          VkBufferUsageFlags usage,
+                          VkMemoryPropertyFlags properties, VkBuffer *buffer,
+                          VkDeviceMemory *buffer_memory);
+static void copy_buffer(const Application *app, VkBuffer src_buffer,
+                        VkBuffer dst_buffer, VkDeviceSize size);
+static void create_image(const Application *app, uint32_t width,
+                         uint32_t height, VkFormat format, VkImageTiling tiling,
+                         VkImageUsageFlags usage,
+                         VkMemoryPropertyFlags properties, VkImage *image,
+                         VkDeviceMemory *image_memory);
+static void transition_image_layout(const Application *app, VkImage image,
+                                    VkFormat format, VkImageLayout old_layout,
+                                    VkImageLayout new_layout);
+static void copy_buffer_to_image(const Application *app, VkBuffer buffer,
+                                 VkImage image, uint32_t width,
+                                 uint32_t height);
+static VkCommandBuffer begin_single_time_commands(const Application *app);
+static void end_single_time_commands(const Application *app,
+                                     VkCommandBuffer command_buffer);
+static VkImageView create_image_view(const Application *app, VkImage image,
+                                     VkFormat format);
 static void populate_debug_messenger_create_info(
     VkDebugUtilsMessengerCreateInfoEXT *create_info);
 static const char **get_required_extensions();
@@ -278,6 +309,9 @@ static void init_vulkan(Application *app) {
     create_graphics_pipeline(app);
     create_framebuffers(app);
     create_command_pool(app);
+    create_texture_image(app);
+    create_texture_image_view(app);
+    create_texture_sampler(app);
     create_vertex_buffer(app);
     create_index_buffer(app);
     create_uniform_buffer(app);
@@ -307,6 +341,11 @@ static void main_loop(Application *app) {
 
 static void cleanup(Application *app) {
     cleanup_swapchain(app);
+
+    vkDestroySampler(app->device, app->texture_sampler, NULL);
+    vkDestroyImageView(app->device, app->texture_image_view, NULL);
+    vkDestroyImage(app->device, app->texture_image, NULL);
+    vkFreeMemory(app->device, app->texture_image_memory, NULL);
 
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroyBuffer(app->device, app->uniform_buffers[i], NULL);
@@ -488,7 +527,9 @@ static void create_logical_device(Application *app) {
         };
     }
 
-    VkPhysicalDeviceFeatures device_features = {0};
+    VkPhysicalDeviceFeatures device_features = {
+        .samplerAnisotropy = VK_TRUE,
+    };
 
     VkDeviceCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -579,24 +620,8 @@ static void create_image_views(Application *app) {
         calloc(app->swapchain_image_count, sizeof(VkImageView));
 
     for (size_t i = 0; i < app->swapchain_image_count; i++) {
-        VkImageViewCreateInfo create_info = {
-            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .image = app->swapchain_images[i],
-            .viewType = VK_IMAGE_VIEW_TYPE_2D,
-            .format = app->swapchain_image_format,
-            .components = {.r = VK_COMPONENT_SWIZZLE_IDENTITY,
-                           .g = VK_COMPONENT_SWIZZLE_IDENTITY,
-                           .b = VK_COMPONENT_SWIZZLE_IDENTITY,
-                           .a = VK_COMPONENT_SWIZZLE_IDENTITY},
-            .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                 .baseMipLevel = 0,
-                                 .levelCount = 1,
-                                 .baseArrayLayer = 0,
-                                 .layerCount = 1},
-        };
-
-        VK_CHECK(vkCreateImageView(app->device, &create_info, NULL,
-                                   &app->swapchain_image_views[i]));
+        app->swapchain_image_views[i] = create_image_view(
+            app, app->swapchain_images[i], app->swapchain_image_format);
     }
 }
 
@@ -647,7 +672,7 @@ static void create_render_pass(Application *app) {
 }
 
 static void create_descriptor_set_layout(Application *app) {
-    VkDescriptorSetLayoutBinding uboLayoutBinding = {
+    VkDescriptorSetLayoutBinding ubo_layout_binding = {
         .binding = 0,
         .descriptorCount = 1,
         .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -655,10 +680,21 @@ static void create_descriptor_set_layout(Application *app) {
         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
     };
 
+    VkDescriptorSetLayoutBinding sampler_layout_binding = {
+        .binding = 1,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImmutableSamplers = NULL,
+        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+    };
+
+    VkDescriptorSetLayoutBinding bindings[] = {ubo_layout_binding,
+                                               sampler_layout_binding};
+
     VkDescriptorSetLayoutCreateInfo layout_info = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = 1,
-        .pBindings = &uboLayoutBinding,
+        .bindingCount = sizeof(bindings) / sizeof(VkDescriptorSetLayoutBinding),
+        .pBindings = bindings,
     };
 
     VK_CHECK(vkCreateDescriptorSetLayout(app->device, &layout_info, NULL,
@@ -858,74 +894,82 @@ static void create_command_pool(Application *app) {
         vkCreateCommandPool(app->device, &pool_info, NULL, &app->command_pool));
 }
 
-static void create_buffer(const Application *app, VkDeviceSize size,
-                          VkBufferUsageFlags usage,
-                          VkMemoryPropertyFlags properties, VkBuffer *buffer,
-                          VkDeviceMemory *buffer_memory) {
-    VkBufferCreateInfo buffer_info = {
-        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = size,
-        .usage = usage,
-        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-    };
+static void create_texture_image(Application *app) {
+    int texture_width, texture_height, texture_channels;
+    stbi_uc *pixels =
+        stbi_load("textures/texture.jpg", &texture_width, &texture_height,
+                  &texture_channels, STBI_rgb_alpha);
+    VkDeviceSize image_size = texture_width * texture_height * 4;
 
-    VK_CHECK(vkCreateBuffer(app->device, &buffer_info, NULL, buffer));
+    if (!pixels) {
+        fprintf(stderr, "Failed to load texture image!\n");
+        exit(EXIT_FAILURE);
+    }
 
-    VkMemoryRequirements memory_requirements;
-    vkGetBufferMemoryRequirements(app->device, *buffer, &memory_requirements);
+    VkBuffer staging_buffer;
+    VkDeviceMemory staging_buffer_memory;
 
-    VkMemoryAllocateInfo alloc_info = {
-        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-        .allocationSize = memory_requirements.size,
-        .memoryTypeIndex =
-            find_memory_type(app->physical_device,
-                             memory_requirements.memoryTypeBits, properties),
-    };
+    create_buffer(app, image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                  &staging_buffer, &staging_buffer_memory);
 
-    VK_CHECK(vkAllocateMemory(app->device, &alloc_info, NULL, buffer_memory));
+    void *data;
+    vkMapMemory(app->device, staging_buffer_memory, 0, image_size, 0, &data);
+    memcpy(data, pixels, image_size);
+    vkUnmapMemory(app->device, staging_buffer_memory);
 
-    vkBindBufferMemory(app->device, *buffer, *buffer_memory, 0);
+    stbi_image_free(pixels);
+
+    create_image(app, texture_width, texture_height, VK_FORMAT_R8G8B8A8_SRGB,
+                 VK_IMAGE_TILING_OPTIMAL,
+                 VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &app->texture_image,
+                 &app->texture_image_memory);
+
+    transition_image_layout(app, app->texture_image, VK_FORMAT_R8G8B8A8_SRGB,
+                            VK_IMAGE_LAYOUT_UNDEFINED,
+                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    copy_buffer_to_image(app, staging_buffer, app->texture_image, texture_width,
+                         texture_height);
+    transition_image_layout(app, app->texture_image, VK_FORMAT_R8G8B8A8_SRGB,
+                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    vkDestroyBuffer(app->device, staging_buffer, NULL);
+    vkFreeMemory(app->device, staging_buffer_memory, NULL);
 }
 
-static void copy_buffer(const Application *app, VkBuffer src_buffer,
-                        VkBuffer dst_buffer, VkDeviceSize size) {
-    VkCommandBufferAllocateInfo alloc_info = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandPool = app->command_pool,
-        .commandBufferCount = 1,
+static void create_texture_image_view(Application *app) {
+    app->texture_image_view =
+        create_image_view(app, app->texture_image, VK_FORMAT_R8G8B8A8_SRGB);
+}
+
+static void create_texture_sampler(Application *app) {
+    VkPhysicalDeviceProperties properties;
+    vkGetPhysicalDeviceProperties(app->physical_device, &properties);
+
+    VkSamplerCreateInfo sampler_info = {
+        .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .magFilter = VK_FILTER_LINEAR,
+        .minFilter = VK_FILTER_LINEAR,
+        .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .anisotropyEnable = VK_TRUE,
+        .maxAnisotropy = properties.limits.maxSamplerAnisotropy,
+        .borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
+        .unnormalizedCoordinates = VK_FALSE,
+        .compareEnable = VK_FALSE,
+        .compareOp = VK_COMPARE_OP_ALWAYS,
+        .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+        .mipLodBias = 0.0f,
+        .minLod = 0.0f,
+        .maxLod = 0.0f,
     };
 
-    VkCommandBuffer command_buffer;
-    vkAllocateCommandBuffers(app->device, &alloc_info, &command_buffer);
-
-    VkCommandBufferBeginInfo begin_info = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-    };
-
-    vkBeginCommandBuffer(command_buffer, &begin_info);
-
-    VkBufferCopy copy_region = {
-        .srcOffset = 0,
-        .dstOffset = 0,
-        .size = size,
-    };
-
-    vkCmdCopyBuffer(command_buffer, src_buffer, dst_buffer, 1, &copy_region);
-
-    vkEndCommandBuffer(command_buffer);
-
-    VkSubmitInfo submit_info = {
-        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .commandBufferCount = 1,
-        .pCommandBuffers = &command_buffer,
-    };
-
-    vkQueueSubmit(app->graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
-    vkQueueWaitIdle(app->graphics_queue);
-
-    vkFreeCommandBuffers(app->device, app->command_pool, 1, &command_buffer);
+    VK_CHECK(vkCreateSampler(app->device, &sampler_info, NULL,
+                             &app->texture_sampler));
 }
 
 static void create_vertex_buffer(Application *app) {
@@ -999,15 +1043,21 @@ static void create_uniform_buffer(Application *app) {
 }
 
 static void create_descriptor_pool(Application *app) {
-    VkDescriptorPoolSize pool_size = {
-        .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .descriptorCount = MAX_FRAMES_IN_FLIGHT,
+    VkDescriptorPoolSize pool_sizes[] = {
+        {
+            .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorCount = MAX_FRAMES_IN_FLIGHT,
+        },
+        {
+            .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = MAX_FRAMES_IN_FLIGHT,
+        },
     };
 
     VkDescriptorPoolCreateInfo pool_info = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .poolSizeCount = 1,
-        .pPoolSizes = &pool_size,
+        .poolSizeCount = sizeof(pool_sizes) / sizeof(VkDescriptorPoolSize),
+        .pPoolSizes = pool_sizes,
         .maxSets = MAX_FRAMES_IN_FLIGHT,
     };
 
@@ -1038,17 +1088,37 @@ static void create_descriptor_sets(Application *app) {
             .range = sizeof(UniformBufferObject),
         };
 
-        VkWriteDescriptorSet descriptor_write = {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = app->descriptor_sets[i],
-            .dstBinding = 0,
-            .dstArrayElement = 0,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount = 1,
-            .pBufferInfo = &buffer_info,
+        VkDescriptorImageInfo image_info = {
+            .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            .imageView = app->texture_image_view,
+            .sampler = app->texture_sampler,
         };
 
-        vkUpdateDescriptorSets(app->device, 1, &descriptor_write, 0, NULL);
+        VkWriteDescriptorSet descriptor_writes[] = {
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = app->descriptor_sets[i],
+                .dstBinding = 0,
+                .dstArrayElement = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorCount = 1,
+                .pBufferInfo = &buffer_info,
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = app->descriptor_sets[i],
+                .dstBinding = 1,
+                .dstArrayElement = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .pImageInfo = &image_info,
+            },
+        };
+
+        vkUpdateDescriptorSets(app->device,
+                               sizeof(descriptor_writes) /
+                                   sizeof(VkWriteDescriptorSet),
+                               descriptor_writes, 0, NULL);
     }
 }
 
@@ -1262,7 +1332,7 @@ static int rate_device_suitability(Application *app, VkPhysicalDevice device) {
     }
     swapchain_support_details_destroy(swapchain_support);
 
-    if (!device_features.geometryShader) {
+    if (!device_features.geometryShader || !device_features.samplerAnisotropy) {
         return -1;
     }
 
@@ -1449,6 +1519,15 @@ static VkVertexInputAttributeDescription *vertex_get_attribute_descriptions() {
 
     darray_push(attribute_descriptions, attribute_description);
 
+    attribute_description = (VkVertexInputAttributeDescription){
+        .binding = 0,
+        .location = 2,
+        .format = VK_FORMAT_R32G32_SFLOAT,
+        .offset = offsetof(Vertex, texture_coordinate),
+    };
+
+    darray_push(attribute_descriptions, attribute_description);
+
     return attribute_descriptions;
 }
 
@@ -1539,6 +1618,227 @@ static VkShaderModule create_shader_module(const Application *app,
         vkCreateShaderModule(app->device, &create_info, NULL, &shader_module));
 
     return shader_module;
+}
+
+static void create_buffer(const Application *app, VkDeviceSize size,
+                          VkBufferUsageFlags usage,
+                          VkMemoryPropertyFlags properties, VkBuffer *buffer,
+                          VkDeviceMemory *buffer_memory) {
+    VkBufferCreateInfo buffer_info = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = size,
+        .usage = usage,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+
+    VK_CHECK(vkCreateBuffer(app->device, &buffer_info, NULL, buffer));
+
+    VkMemoryRequirements memory_requirements;
+    vkGetBufferMemoryRequirements(app->device, *buffer, &memory_requirements);
+
+    VkMemoryAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = memory_requirements.size,
+        .memoryTypeIndex =
+            find_memory_type(app->physical_device,
+                             memory_requirements.memoryTypeBits, properties),
+    };
+
+    VK_CHECK(vkAllocateMemory(app->device, &alloc_info, NULL, buffer_memory));
+
+    vkBindBufferMemory(app->device, *buffer, *buffer_memory, 0);
+}
+
+static void copy_buffer(const Application *app, VkBuffer src_buffer,
+                        VkBuffer dst_buffer, VkDeviceSize size) {
+    VkCommandBuffer command_buffer = begin_single_time_commands(app);
+
+    VkBufferCopy copy_region = {
+        .srcOffset = 0,
+        .dstOffset = 0,
+        .size = size,
+    };
+
+    vkCmdCopyBuffer(command_buffer, src_buffer, dst_buffer, 1, &copy_region);
+
+    end_single_time_commands(app, command_buffer);
+}
+
+static void create_image(const Application *app, uint32_t width,
+                         uint32_t height, VkFormat format, VkImageTiling tiling,
+                         VkImageUsageFlags usage,
+                         VkMemoryPropertyFlags properties, VkImage *image,
+                         VkDeviceMemory *image_memory) {
+    VkImageCreateInfo image_info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .extent = {.width = width, .height = height, .depth = 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .format = format,
+        .tiling = tiling,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .usage = usage,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+    };
+
+    VK_CHECK(vkCreateImage(app->device, &image_info, NULL, image));
+
+    VkMemoryRequirements memory_requirements;
+    vkGetImageMemoryRequirements(app->device, app->texture_image,
+                                 &memory_requirements);
+
+    VkMemoryAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = memory_requirements.size,
+        .memoryTypeIndex =
+            find_memory_type(app->physical_device,
+                             memory_requirements.memoryTypeBits, properties),
+    };
+
+    VK_CHECK(vkAllocateMemory(app->device, &alloc_info, NULL, image_memory));
+
+    vkBindImageMemory(app->device, *image, *image_memory, 0);
+}
+
+static void transition_image_layout(const Application *app, VkImage image,
+                                    VkFormat format, VkImageLayout old_layout,
+                                    VkImageLayout new_layout) {
+    VkCommandBuffer command_buffer = begin_single_time_commands(app);
+
+    VkPipelineStageFlags source_stage;
+    VkPipelineStageFlags destination_stage;
+    VkAccessFlags source_access;
+    VkAccessFlags destination_access;
+
+    if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED &&
+        new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        source_access = 0;
+        destination_access = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+        source_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        destination_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    } else if (old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+               new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        source_access = VK_ACCESS_TRANSFER_WRITE_BIT;
+        destination_access = VK_ACCESS_SHADER_READ_BIT;
+
+        source_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        destination_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else {
+        fprintf(stderr, "Unsupported layout transition: %d -> %d", old_layout,
+                new_layout);
+        exit(EXIT_FAILURE);
+    }
+
+    VkImageMemoryBarrier barrier = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .oldLayout = old_layout,
+        .newLayout = new_layout,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = image,
+        .subresourceRange =
+            {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        .srcAccessMask = source_access,
+        .dstAccessMask = destination_access,
+    };
+
+    vkCmdPipelineBarrier(command_buffer, source_stage, destination_stage,
+                         0,          // dependencies
+                         0, NULL,    // memory barriers
+                         0, NULL,    // buffer memory barriers
+                         1, &barrier // image memory barriers
+    );
+
+    end_single_time_commands(app, command_buffer);
+}
+
+static void copy_buffer_to_image(const Application *app, VkBuffer buffer,
+                                 VkImage image, uint32_t width,
+                                 uint32_t height) {
+    VkCommandBuffer command_buffer = begin_single_time_commands(app);
+
+    VkBufferImageCopy region = {
+        .bufferOffset = 0,
+        .bufferRowLength = 0,
+        .bufferImageHeight = 0,
+        .imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                             .mipLevel = 0,
+                             .baseArrayLayer = 0,
+                             .layerCount = 1},
+        .imageOffset = {0, 0, 0},
+        .imageExtent = {width, height, 1},
+    };
+
+    vkCmdCopyBufferToImage(command_buffer, buffer, image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    end_single_time_commands(app, command_buffer);
+}
+
+static VkCommandBuffer begin_single_time_commands(const Application *app) {
+    VkCommandBufferAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandPool = app->command_pool,
+        .commandBufferCount = 1,
+    };
+
+    VkCommandBuffer command_buffer;
+    vkAllocateCommandBuffers(app->device, &alloc_info, &command_buffer);
+
+    VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+
+    vkBeginCommandBuffer(command_buffer, &begin_info);
+
+    return command_buffer;
+}
+
+static void end_single_time_commands(const Application *app,
+                                     VkCommandBuffer command_buffer) {
+    vkEndCommandBuffer(command_buffer);
+
+    VkSubmitInfo submit_info = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &command_buffer,
+    };
+
+    vkQueueSubmit(app->graphics_queue, 1, &submit_info, NULL);
+    vkQueueWaitIdle(app->graphics_queue);
+
+    vkFreeCommandBuffers(app->device, app->command_pool, 1, &command_buffer);
+}
+
+static VkImageView create_image_view(const Application *app, VkImage image,
+                                     VkFormat format) {
+    VkImageViewCreateInfo view_info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = image,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = format,
+        .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                             .baseMipLevel = 0,
+                             .levelCount = 1,
+                             .baseArrayLayer = 0,
+                             .layerCount = 1},
+    };
+
+    VkImageView image_view;
+    VK_CHECK(vkCreateImageView(app->device, &view_info, NULL, &image_view));
+
+    return image_view;
 }
 
 static void populate_debug_messenger_create_info(

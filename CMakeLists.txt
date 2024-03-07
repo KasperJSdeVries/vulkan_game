@@ -50,5 +50,14 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>/shaders"
         )
 
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/textures/"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${PROJECT_SOURCE_DIR}/textures"
+        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/textures"
+        )
+
+
 install(TARGETS ${PROJECT_NAME})
 install(DIRECTORY "$<TARGET_FILE_DIR:${PROJECT_NAME}>/shaders" TYPE DATA)
+install(DIRECTORY "$<TARGET_FILE_DIR:${PROJECT_NAME}>/textures" TYPE DATA)
