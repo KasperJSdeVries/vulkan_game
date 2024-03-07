@@ -2,6 +2,7 @@
 #include <GLFW/glfw3.h>
 
 #define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 #include <cglm/cam.h>
 #include <cglm/cglm.h>
@@ -59,19 +60,27 @@ const char *device_extenstions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
     }
 
 typedef struct {
-    vec2s position;
+    vec3s position;
     vec3s color;
     vec2s texture_coordinate;
 } Vertex;
 
 const Vertex vertices[] = {
-    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+
+    {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+    {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+    {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
 };
 
-const uint16_t indices[] = {0, 1, 2, 2, 3, 0};
+const uint16_t indices[] = {
+    0, 1, 2, 2, 3, 0, // plane 1
+    4, 5, 6, 6, 7, 4, // plane 2
+};
 
 typedef struct {
     mat4s model;
@@ -151,6 +160,10 @@ typedef struct {
     VkDeviceMemory texture_image_memory;
     VkImageView texture_image_view;
     VkSampler texture_sampler;
+
+    VkImage depth_image;
+    VkDeviceMemory depth_image_memory;
+    VkImageView depth_image_view;
 } Application;
 
 static void init_window(Application *app);
@@ -169,8 +182,9 @@ static void create_image_views(Application *app);
 static void create_render_pass(Application *app);
 static void create_descriptor_set_layout(Application *app);
 static void create_graphics_pipeline(Application *app);
-static void create_framebuffers(Application *app);
 static void create_command_pool(Application *app);
+static void create_depth_resources(Application *app);
+static void create_framebuffers(Application *app);
 static void create_texture_image(Application *app);
 static void create_texture_image_view(Application *app);
 static void create_texture_sampler(Application *app);
@@ -233,13 +247,21 @@ static VkCommandBuffer begin_single_time_commands(const Application *app);
 static void end_single_time_commands(const Application *app,
                                      VkCommandBuffer command_buffer);
 static VkImageView create_image_view(const Application *app, VkImage image,
-                                     VkFormat format);
+                                     VkFormat format,
+                                     VkImageAspectFlags aspect_flags);
 static void populate_debug_messenger_create_info(
     VkDebugUtilsMessengerCreateInfoEXT *create_info);
 static const char **get_required_extensions();
 static uint32_t find_memory_type(VkPhysicalDevice physical_device,
                                  uint32_t type_filter,
                                  VkMemoryPropertyFlags properties);
+static VkFormat find_supported_format(VkPhysicalDevice physical_device,
+                                      VkFormat *candidates,
+                                      uint32_t candidate_count,
+                                      VkImageTiling tiling,
+                                      VkFormatFeatureFlags features);
+static bool has_stencil_component(VkFormat format);
+static VkFormat find_depth_format(VkPhysicalDevice physical_device);
 static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
     VkDebugUtilsMessageSeverityFlagsEXT message_severity,
     VkDebugUtilsMessageTypeFlagsEXT message_type,
@@ -307,8 +329,9 @@ static void init_vulkan(Application *app) {
     create_render_pass(app);
     create_descriptor_set_layout(app);
     create_graphics_pipeline(app);
-    create_framebuffers(app);
     create_command_pool(app);
+    create_depth_resources(app);
+    create_framebuffers(app);
     create_texture_image(app);
     create_texture_image_view(app);
     create_texture_sampler(app);
@@ -394,6 +417,10 @@ static void cleanup(Application *app) {
 }
 
 static void cleanup_swapchain(Application *app) {
+    vkDestroyImageView(app->device, app->depth_image_view, NULL);
+    vkDestroyImage(app->device, app->depth_image, NULL);
+    vkFreeMemory(app->device, app->depth_image_memory, NULL);
+
     for (int i = 0; i < app->swapchain_image_count; i++) {
         vkDestroyFramebuffer(app->device, app->swapchain_framebuffers[i], NULL);
     }
@@ -423,6 +450,7 @@ static void recreate_swapchain(Application *app) {
 
     create_swapchain(app);
     create_image_views(app);
+    create_depth_resources(app);
     create_framebuffers(app);
 }
 
@@ -621,7 +649,8 @@ static void create_image_views(Application *app) {
 
     for (size_t i = 0; i < app->swapchain_image_count; i++) {
         app->swapchain_image_views[i] = create_image_view(
-            app, app->swapchain_images[i], app->swapchain_image_format);
+            app, app->swapchain_images[i], app->swapchain_image_format,
+            VK_IMAGE_ASPECT_COLOR_BIT);
     }
 }
 
@@ -642,25 +671,49 @@ static void create_render_pass(Application *app) {
         .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
     };
 
+    VkAttachmentDescription depth_attachment = {
+        .format = find_depth_format(app->physical_device),
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+    };
+
+    VkAttachmentReference depth_attachment_reference = {
+        .attachment = 1,
+        .layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+    };
+
     VkSubpassDescription subpass = {
         .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
         .colorAttachmentCount = 1,
         .pColorAttachments = &color_attachment_reference,
+        .pDepthStencilAttachment = &depth_attachment_reference,
     };
 
     VkSubpassDependency dependency = {
         .srcSubpass = VK_SUBPASS_EXTERNAL,
         .dstSubpass = 0,
-        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
         .srcAccessMask = 0,
-        .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+        .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                         VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
     };
+
+    VkAttachmentDescription attachments[] = {color_attachment,
+                                             depth_attachment};
 
     VkRenderPassCreateInfo render_pass_info = {
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-        .attachmentCount = 1,
-        .pAttachments = &color_attachment,
+        .attachmentCount =
+            sizeof(attachments) / sizeof(VkAttachmentDescription),
+        .pAttachments = attachments,
         .subpassCount = 1,
         .pSubpasses = &subpass,
         .dependencyCount = 1,
@@ -817,6 +870,15 @@ static void create_graphics_pipeline(Application *app) {
         .pAttachments = &color_blend_attachment,
     };
 
+    VkPipelineDepthStencilStateCreateInfo depth_stencil = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+        .depthTestEnable = VK_TRUE,
+        .depthWriteEnable = VK_TRUE,
+        .depthCompareOp = VK_COMPARE_OP_LESS,
+        .depthBoundsTestEnable = VK_FALSE,
+        .stencilTestEnable = VK_FALSE,
+    };
+
     VkPipelineLayoutCreateInfo pipeline_layout_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
@@ -835,7 +897,7 @@ static void create_graphics_pipeline(Application *app) {
         .pViewportState = &viewport_state,
         .pRasterizationState = &rasterizer,
         .pMultisampleState = &multisampling,
-        .pDepthStencilState = NULL,
+        .pDepthStencilState = &depth_stencil,
         .pColorBlendState = &color_blending,
         .pDynamicState = &dynamic_state,
         .layout = app->pipeline_layout,
@@ -856,30 +918,6 @@ static void create_graphics_pipeline(Application *app) {
     free(frag_shader_code);
 }
 
-static void create_framebuffers(Application *app) {
-    app->swapchain_framebuffers =
-        calloc(app->swapchain_image_count, sizeof(VkFramebuffer));
-
-    for (int i = 0; i < app->swapchain_image_count; i++) {
-        VkImageView attachments[] = {
-            app->swapchain_image_views[i],
-        };
-
-        VkFramebufferCreateInfo framebuffer_info = {
-            .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-            .renderPass = app->render_pass,
-            .attachmentCount = 1,
-            .pAttachments = attachments,
-            .width = app->swapchain_extent.width,
-            .height = app->swapchain_extent.height,
-            .layers = 1,
-        };
-
-        VK_CHECK(vkCreateFramebuffer(app->device, &framebuffer_info, NULL,
-                                     &app->swapchain_framebuffers[i]));
-    }
-}
-
 static void create_command_pool(Application *app) {
     QueueFamilyIndices queue_family_indices =
         findQueueFamilies(app, app->physical_device);
@@ -892,6 +930,47 @@ static void create_command_pool(Application *app) {
 
     VK_CHECK(
         vkCreateCommandPool(app->device, &pool_info, NULL, &app->command_pool));
+}
+
+static void create_depth_resources(Application *app) {
+    VkFormat depth_format = find_depth_format(app->physical_device);
+
+    create_image(app, app->swapchain_extent.width, app->swapchain_extent.height,
+                 depth_format, VK_IMAGE_TILING_OPTIMAL,
+                 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &app->depth_image,
+                 &app->depth_image_memory);
+    app->depth_image_view = create_image_view(
+        app, app->depth_image, depth_format, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+    transition_image_layout(app, app->depth_image, depth_format,
+                            VK_IMAGE_LAYOUT_UNDEFINED,
+                            VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+}
+
+static void create_framebuffers(Application *app) {
+    app->swapchain_framebuffers =
+        calloc(app->swapchain_image_count, sizeof(VkFramebuffer));
+
+    for (int i = 0; i < app->swapchain_image_count; i++) {
+        VkImageView attachments[] = {
+            app->swapchain_image_views[i],
+            app->depth_image_view,
+        };
+
+        VkFramebufferCreateInfo framebuffer_info = {
+            .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+            .renderPass = app->render_pass,
+            .attachmentCount = sizeof(attachments) / sizeof(VkImageView),
+            .pAttachments = attachments,
+            .width = app->swapchain_extent.width,
+            .height = app->swapchain_extent.height,
+            .layers = 1,
+        };
+
+        VK_CHECK(vkCreateFramebuffer(app->device, &framebuffer_info, NULL,
+                                     &app->swapchain_framebuffers[i]));
+    }
 }
 
 static void create_texture_image(Application *app) {
@@ -942,7 +1021,8 @@ static void create_texture_image(Application *app) {
 
 static void create_texture_image_view(Application *app) {
     app->texture_image_view =
-        create_image_view(app, app->texture_image, VK_FORMAT_R8G8B8A8_SRGB);
+        create_image_view(app, app->texture_image, VK_FORMAT_R8G8B8A8_SRGB,
+                          VK_IMAGE_ASPECT_COLOR_BIT);
 }
 
 static void create_texture_sampler(Application *app) {
@@ -1163,15 +1243,18 @@ static void record_command_buffer(const Application *app,
 
     VK_CHECK(vkBeginCommandBuffer(command_buffer, &begin_info));
 
-    VkClearValue clear_color = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+    VkClearValue clear_values[] = {
+        (VkClearValue){.color = {{0.0f, 0.0f, 0.0f, 1.0f}}},
+        (VkClearValue){.depthStencil = {1.0f, 0}},
+    };
 
     VkRenderPassBeginInfo render_pass_info = {
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
         .renderPass = app->render_pass,
         .framebuffer = app->swapchain_framebuffers[image_index],
         .renderArea = {.offset = {0, 0}, .extent = app->swapchain_extent},
-        .clearValueCount = 1,
-        .pClearValues = &clear_color,
+        .clearValueCount = sizeof(clear_values) / sizeof(VkClearValue),
+        .pClearValues = clear_values,
     };
 
     vkCmdBeginRenderPass(command_buffer, &render_pass_info,
@@ -1504,7 +1587,7 @@ static VkVertexInputAttributeDescription *vertex_get_attribute_descriptions() {
     VkVertexInputAttributeDescription attribute_description = {
         .binding = 0,
         .location = 0,
-        .format = VK_FORMAT_R32G32_SFLOAT,
+        .format = VK_FORMAT_R32G32B32_SFLOAT,
         .offset = offsetof(Vertex, position),
     };
 
@@ -1686,8 +1769,7 @@ static void create_image(const Application *app, uint32_t width,
     VK_CHECK(vkCreateImage(app->device, &image_info, NULL, image));
 
     VkMemoryRequirements memory_requirements;
-    vkGetImageMemoryRequirements(app->device, app->texture_image,
-                                 &memory_requirements);
+    vkGetImageMemoryRequirements(app->device, *image, &memory_requirements);
 
     VkMemoryAllocateInfo alloc_info = {
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
@@ -1709,28 +1791,6 @@ static void transition_image_layout(const Application *app, VkImage image,
 
     VkPipelineStageFlags source_stage;
     VkPipelineStageFlags destination_stage;
-    VkAccessFlags source_access;
-    VkAccessFlags destination_access;
-
-    if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED &&
-        new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-        source_access = 0;
-        destination_access = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-        source_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-        destination_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-    } else if (old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
-               new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-        source_access = VK_ACCESS_TRANSFER_WRITE_BIT;
-        destination_access = VK_ACCESS_SHADER_READ_BIT;
-
-        source_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-        destination_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-    } else {
-        fprintf(stderr, "Unsupported layout transition: %d -> %d", old_layout,
-                new_layout);
-        exit(EXIT_FAILURE);
-    }
 
     VkImageMemoryBarrier barrier = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -1741,15 +1801,50 @@ static void transition_image_layout(const Application *app, VkImage image,
         .image = image,
         .subresourceRange =
             {
-                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                 .baseMipLevel = 0,
                 .levelCount = 1,
                 .baseArrayLayer = 0,
                 .layerCount = 1,
             },
-        .srcAccessMask = source_access,
-        .dstAccessMask = destination_access,
     };
+
+    if (new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+
+        if (has_stencil_component(format)) {
+            barrier.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+        }
+    } else {
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    }
+
+    if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED &&
+        new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+        source_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        destination_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    } else if (old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+               new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+        source_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        destination_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED &&
+               new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+        source_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        destination_stage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    } else {
+        fprintf(stderr, "Unsupported layout transition: %d -> %d", old_layout,
+                new_layout);
+        exit(EXIT_FAILURE);
+    }
 
     vkCmdPipelineBarrier(command_buffer, source_stage, destination_stage,
                          0,          // dependencies
@@ -1822,17 +1917,21 @@ static void end_single_time_commands(const Application *app,
 }
 
 static VkImageView create_image_view(const Application *app, VkImage image,
-                                     VkFormat format) {
+                                     VkFormat format,
+                                     VkImageAspectFlags aspect_flags) {
     VkImageViewCreateInfo view_info = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .image = image,
         .viewType = VK_IMAGE_VIEW_TYPE_2D,
         .format = format,
-        .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                             .baseMipLevel = 0,
-                             .levelCount = 1,
-                             .baseArrayLayer = 0,
-                             .layerCount = 1},
+        .subresourceRange =
+            {
+                .aspectMask = aspect_flags,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
     };
 
     VkImageView image_view;
@@ -1893,6 +1992,48 @@ static uint32_t find_memory_type(VkPhysicalDevice physical_device,
 
     fprintf(stderr, "Failed to find suitable memory type\n");
     exit(EXIT_FAILURE);
+}
+
+static VkFormat find_supported_format(VkPhysicalDevice physical_device,
+                                      VkFormat *candidates,
+                                      uint32_t candidate_count,
+                                      VkImageTiling tiling,
+                                      VkFormatFeatureFlags features) {
+    for (int i = 0; i < candidate_count; i++) {
+        VkFormatProperties properties;
+        vkGetPhysicalDeviceFormatProperties(physical_device, candidates[i],
+                                            &properties);
+
+        if (tiling == VK_IMAGE_TILING_LINEAR &&
+            (properties.linearTilingFeatures & features) == features) {
+            return candidates[i];
+        } else if (tiling == VK_IMAGE_TILING_OPTIMAL &&
+                   (properties.optimalTilingFeatures & features) == features) {
+            return candidates[i];
+        }
+    }
+
+    fprintf(stderr, "Failed to find supported format!\n");
+    exit(EXIT_FAILURE);
+}
+
+static VkFormat find_depth_format(VkPhysicalDevice physical_device) {
+
+    VkFormat candidates[] = {
+        VK_FORMAT_D32_SFLOAT,
+        VK_FORMAT_D32_SFLOAT_S8_UINT,
+        VK_FORMAT_D24_UNORM_S8_UINT,
+    };
+
+    return find_supported_format(
+        physical_device, candidates, sizeof(candidates) / sizeof(VkFormat),
+        VK_IMAGE_TILING_OPTIMAL,
+        VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
+}
+
+static bool has_stencil_component(VkFormat format) {
+    return format == VK_FORMAT_D32_SFLOAT_S8_UINT ||
+           format == VK_FORMAT_D24_UNORM_S8_UINT;
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL
