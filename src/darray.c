@@ -49,8 +49,7 @@ void _darray_field_set(void *array, uint64_t field, uint64_t value) {
 void *_darray_resize(void *array) {
     uint64_t length = darray_length(array);
     uint64_t stride = darray_stride(array);
-    void *temp =
-        _darray_create((DARRAY_RESIZE_FACTOR * darray_capacity(array)), stride);
+    void *temp = _darray_create((DARRAY_RESIZE_FACTOR * darray_capacity(array)), stride);
     memcpy(temp, array, length * stride);
     _darray_field_set(temp, DARRAY_LENGTH, length);
     _darray_destroy(array);
@@ -92,8 +91,7 @@ void _darray_pop_at(void *array, uint64_t index, void *out_value) {
     memcpy(out_value, (void *)addr, stride);
 
     // copy everything after index to up one
-    memcpy((void *)addr, (void *)addr + stride,
-           (length - (index + 1)) * stride);
+    memcpy((void *)addr, (void *)addr + stride, (length - (index + 1)) * stride);
 
     _darray_field_set(array, DARRAY_LENGTH, length - 1);
 }

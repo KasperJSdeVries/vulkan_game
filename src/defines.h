@@ -42,7 +42,6 @@ STATIC_ASSERT(sizeof(f64) == 8, "Expected f64 to be 8 bytes.");
 STATIC_ASSERT(sizeof(b8) == 1, "Expected b8 to be 1 bytes.");
 STATIC_ASSERT(sizeof(b32) == 4, "Expected b32 to be 4 bytes.");
 
-#define CLAMP(value, min, max)                                                 \
-    (value <= min ? min : (value >= max ? max : value))
+#define CLAMP(value, min, max) (value <= min ? min : (value >= max ? max : value))
 
 #endif // DEFINES_H

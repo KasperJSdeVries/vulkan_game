@@ -1,2 +1,10 @@
 BasedOnStyle: LLVM
+AlignAfterOpenBracket: Align
+AllowAllArgumentsOnNextLine: false
+AllowAllParametersOfDeclarationOnNextLine: false
+ColumnLimit: 100
+BinPackArguments: false
+BinPackParameters: false
+BreakArrays: false
 IndentWidth: 4
+PenaltyReturnTypeOnItsOwnLine: 200
