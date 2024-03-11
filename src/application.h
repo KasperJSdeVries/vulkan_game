@@ -15,6 +15,18 @@
 
 #define MAX_FRAMES_IN_FLIGHT 2
 
+#define VK_CHECK(fun)                                                                              \
+    if (fun != VK_SUCCESS) {                                                                       \
+        fprintf(stderr, "%s:%d: \"%s\"\n", __FILE_NAME__, __LINE__, #fun);                         \
+        exit(EXIT_FAILURE);                                                                        \
+    }
+
+typedef struct {
+    mat4s model;
+    mat4s view;
+    mat4s projection;
+} UniformBufferObject;
+
 typedef struct {
     GLFWwindow *window;
     VkSurfaceKHR surface;

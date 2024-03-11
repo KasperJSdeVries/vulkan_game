@@ -35,7 +35,10 @@ add_custom_target(
     DEPENDS ${SPIRV_BINARY_FILES}
     )
 
-file(GLOB_RECURSE SOURCES "src/*.c")
+set(SOURCES
+    src/application.c
+    src/darray.c
+    src/main.c)
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 target_link_libraries(${PROJECT_NAME} glfw ${Vulkan_LIBRARY} cglm m)

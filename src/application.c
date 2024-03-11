@@ -34,16 +34,10 @@ const uint16_t indices[] = {
     4, // plane 2
 };
 
-#define VK_CHECK(fun)                                                                              \
-    if (fun != VK_SUCCESS) {                                                                       \
-        fprintf(stderr, "%s:%d: \"%s\"\n", __FILE_NAME__, __LINE__, #fun);                         \
-        exit(EXIT_FAILURE);                                                                        \
-    }
-
 const char *validation_layers[] = {"VK_LAYER_KHRONOS_validation"};
 #define validation_layer_count sizeof(validation_layers) / sizeof(const char *)
 
-const char *device_extenstions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+static const char *device_extenstions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 #define device_extenstion_count sizeof(device_extenstions) / sizeof(const char *)
 
 #ifdef NDEBUG
@@ -60,12 +54,6 @@ const char *device_extenstions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
                 __LINE__);                                                                         \
         exit(EXIT_FAILURE);                                                                        \
     }
-
-typedef struct {
-    mat4s model;
-    mat4s view;
-    mat4s projection;
-} UniformBufferObject;
 
 typedef struct {
     uint32_t graphics_family;
@@ -465,14 +453,9 @@ static void create_logical_device(Application *app) {
         .pEnabledFeatures = &device_features,
         .enabledExtensionCount = device_extenstion_count,
         .ppEnabledExtensionNames = device_extenstions,
+        .enabledLayerCount = 0,      // deprecated & ignored
+        .ppEnabledLayerNames = NULL, // deprecated & ignored
     };
-
-    if (enable_validation_layers) {
-        create_info.enabledLayerCount = validation_layer_count;
-        create_info.ppEnabledLayerNames = validation_layers;
-    } else {
-        create_info.enabledLayerCount = 0;
-    }
 
     VK_CHECK(vkCreateDevice(app->physical_device, &create_info, NULL, &app->device));
 
@@ -655,6 +638,9 @@ static void create_graphics_pipeline(Application *app) {
     VkShaderModule frag_shader_module =
         create_shader_module(app, frag_shader_code, frag_shader_size);
 
+    free(vert_shader_code);
+    free(frag_shader_code);
+
     VkPipelineShaderStageCreateInfo vert_shader_stage_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
         .stage = VK_SHADER_STAGE_VERTEX_BIT,
@@ -800,9 +786,6 @@ static void create_graphics_pipeline(Application *app) {
 
     vkDestroyShaderModule(app->device, vert_shader_module, NULL);
     vkDestroyShaderModule(app->device, frag_shader_module, NULL);
-
-    free(vert_shader_code);
-    free(frag_shader_code);
 }
 
 static void create_command_pool(Application *app) {
