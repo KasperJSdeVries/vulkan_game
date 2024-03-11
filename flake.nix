@@ -62,7 +62,11 @@
             inherit src;
             hooks = {
               alejandra.enable = true;
-              clang-format.enable = true;
+              clang-format = {
+                enable = true;
+                types_or = ["c" "c++"];
+              };
+              cmake-format.enable = true;
             };
           };
         };
