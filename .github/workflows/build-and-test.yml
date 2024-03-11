@@ -62,7 +62,7 @@ jobs:
         # Vulkan SDK configuration path (prefer this to relying on vulkan-query-version lookup)
         #vulkan-config-file: # optional, default is 
         # Vulkan SDK release version (download configuration file from LunarG web services)
-        #vulkan-query-version: # optional, default is 
+        vulkan-query-version: latest
         # specify which Vulkan SDK components to install, e.g. Vulkan-Headers, Vulkan-Loader, Glslang
         vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang
         # specify whether to cache VULKAN_SDK/ results between runs (using github actions/cache)
