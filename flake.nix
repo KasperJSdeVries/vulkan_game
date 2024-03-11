@@ -32,7 +32,6 @@
           clang-tools
           git
           cglm
-          extra-cmake-modules
           glfw
           glslang
           shaderc
