@@ -1,0 +1,32 @@
+#ifndef PIPELINE_H
+#define PIPELINE_H
+
+#include "defines.h"
+#include "device.h"
+
+#include <vulkan/vulkan.h>
+
+typedef struct pipeline_builder_t pipeline_builder;
+
+typedef struct pipeline_t pipeline;
+
+pipeline_builder *pipeline_builder_new(device *device);
+
+void pipeline_builder_set_shaders(pipeline_builder *builder,
+                                  const char *vertex_shader_path,
+                                  const char *fragment_shader_path);
+void pipeline_builder_add_input_binding(pipeline_builder *builder, u32 binding, u64 stride);
+void pipeline_builder_add_input_attribute(pipeline_builder *builder,
+                                          u32 binding,
+                                          u32 location,
+                                          VkFormat format,
+                                          u32 offset);
+void pipeline_builder_set_ubo_size(pipeline_builder *builder, u64 ubo_size);
+
+pipeline *pipeline_builder_build(pipeline_builder *builder, VkRenderPass render_pass);
+
+void pipeline_bind(const pipeline *pipeline, VkCommandBuffer command_buffer);
+
+void pipeline_destroy(pipeline **pipeline, device *device);
+
+#endif // PIPELINE_H

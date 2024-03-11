@@ -32,7 +32,14 @@ endforeach(GLSL)
 
 add_custom_target(Shaders DEPENDS ${SPIRV_BINARY_FILES})
 
-set(SOURCES src/application.c src/darray.c src/main.c)
+set(SOURCES
+    src/device.c
+    src/pipeline.c
+    src/command_buffer.c
+    src/darray.c
+    src/application.c
+    src/darray.c
+    src/main.c)
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 target_link_libraries(${PROJECT_NAME} glfw ${Vulkan_LIBRARY} cglm m)
