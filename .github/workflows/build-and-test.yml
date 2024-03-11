@@ -64,9 +64,9 @@ jobs:
         # Vulkan SDK release version (download configuration file from LunarG web services)
         vulkan-query-version: latest
         # specify which Vulkan SDK components to install, e.g. Vulkan-Headers, Vulkan-Loader, Glslang
-        vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang
+        vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang, SPIRV-Tools
         # specify whether to cache VULKAN_SDK/ results between runs (using github actions/cache)
-        #vulkan-use-cache: # optional
+        vulkan-use-cache: true
           
 
     - name: Install GLFW Deps
