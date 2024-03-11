@@ -23,26 +23,16 @@ jobs:
       #
       # To add more build types (Release, Debug, RelWithDebInfo, etc.) customize the build_type list.
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest]
         build_type: [Release]
-        c_compiler: [gcc, clang, cl]
+        c_compiler: [gcc, clang]
         include:
-          - os: windows-latest
-            c_compiler: cl
-            cpp_compiler: cl
           - os: ubuntu-latest
             c_compiler: gcc
             cpp_compiler: g++
           - os: ubuntu-latest
             c_compiler: clang
             cpp_compiler: clang++
-        exclude:
-          - os: windows-latest
-            c_compiler: gcc
-          - os: windows-latest
-            c_compiler: clang
-          - os: ubuntu-latest
-            c_compiler: cl
 
     steps:
     - uses: actions/checkout@v3
@@ -54,25 +44,12 @@ jobs:
       run: |
         echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
 
-    - name: Setup Vulkan SDK
-      # You may pin to the exact commit or the version.
-      # uses: humbletim/setup-vulkan-sdk@72eed4b9dbeac5de168f83da8e30b1d0f8ac7f14
-      uses: humbletim/setup-vulkan-sdk@v1.2.0
-      with:
-        # Vulkan SDK configuration path (prefer this to relying on vulkan-query-version lookup)
-        #vulkan-config-file: # optional, default is 
-        # Vulkan SDK release version (download configuration file from LunarG web services)
-        vulkan-query-version: latest
-        # specify which Vulkan SDK components to install, e.g. Vulkan-Headers, Vulkan-Loader, Glslang
-        vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang, SPIRV-Tools
-        # specify whether to cache VULKAN_SDK/ results between runs (using github actions/cache)
-        vulkan-use-cache: true
-          
-
-    - name: Install GLFW Deps
-      # You may pin to the exact commit or the version.
-      uses: RpxdYTX/install-glfw-deps@v2
-          
+    
+    - uses: DeterminateSystems/nix-installer-action@main
+    - uses: DeterminateSystems/magic-nix-cache-action@main
+    - uses: DeterminateSystems/flake-checker-action@main
+    - name: enter shell environment
+      run: nix develop
 
     - name: Configure CMake
       # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
