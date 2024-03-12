@@ -62,14 +62,6 @@ typedef struct {
     bool has_present_family;
 } QueueFamilyIndices;
 
-typedef struct {
-    VkSurfaceCapabilitiesKHR capabilities;
-    VkSurfaceFormatKHR *formats;
-    uint32_t format_count;
-    VkPresentModeKHR *present_modes;
-    uint32_t present_mode_count;
-} SwapchainSupportDetails;
-
 static void recreate_swapchain(Application *app);
 static void create_instance(Application *app);
 static void setup_debug_messenger(Application *app);
@@ -1878,23 +1870,6 @@ static const char **get_required_extensions() {
     }
 
     return required_extensions;
-}
-
-static uint32_t find_memory_type(VkPhysicalDevice physical_device,
-                                 uint32_t type_filter,
-                                 VkMemoryPropertyFlags properties) {
-    VkPhysicalDeviceMemoryProperties memory_properties;
-    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
-
-    for (uint32_t i = 0; i < memory_properties.memoryTypeCount; i++) {
-        if ((type_filter & (1 << i)) &&
-            ((memory_properties.memoryTypes[i].propertyFlags & properties) == properties)) {
-            return i;
-        }
-    }
-
-    fprintf(stderr, "Failed to find suitable memory type\n");
-    exit(EXIT_FAILURE);
 }
 
 static VkFormat find_supported_format(VkPhysicalDevice physical_device,

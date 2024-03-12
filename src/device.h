@@ -1,17 +1,15 @@
 #ifndef DEVICE_H
 #define DEVICE_H
 
-#include <vulkan/vulkan.h>
+#include "types.h"
 
-typedef struct device_t device;
+void device_new(context *context);
+void device_destroy(device *device);
 
-VkDevice device_get_handle(device *device);
+void device_query_swapchain_support(VkPhysicalDevice physical_device,
+                                    VkSurfaceKHR surface,
+                                    swapchain_support_info *support_info);
 
-void device_create_buffer(device *device,
-                          VkDeviceSize size,
-                          VkBufferUsageFlags usage,
-                          VkMemoryPropertyFlags properties,
-                          VkBuffer *buffer,
-                          VkDeviceMemory *buffer_memory);
+b8 device_detect_depth_format(device *device);
 
 #endif // DEVICE_H

@@ -1,15 +1,15 @@
 #include "command_buffer.h"
 
-VkCommandBuffer begin_single_time_commands(const Application *app) {
+VkCommandBuffer begin_single_time_commands(const context *context) {
     VkCommandBufferAllocateInfo alloc_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandPool = app->command_pool,
+        .commandPool = context->device.graphics_command_pool,
         .commandBufferCount = 1,
     };
 
     VkCommandBuffer command_buffer;
-    vkAllocateCommandBuffers(app->device, &alloc_info, &command_buffer);
+    vkAllocateCommandBuffers(context->device.logical_device, &alloc_info, &command_buffer);
 
     VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -21,7 +21,7 @@ VkCommandBuffer begin_single_time_commands(const Application *app) {
     return command_buffer;
 }
 
-void end_single_time_commands(const Application *app, VkCommandBuffer command_buffer) {
+void end_single_time_commands(const context *context, VkCommandBuffer command_buffer) {
     vkEndCommandBuffer(command_buffer);
 
     VkSubmitInfo submit_info = {
@@ -30,8 +30,11 @@ void end_single_time_commands(const Application *app, VkCommandBuffer command_bu
         .pCommandBuffers = &command_buffer,
     };
 
-    vkQueueSubmit(app->graphics_queue, 1, &submit_info, NULL);
-    vkQueueWaitIdle(app->graphics_queue);
+    vkQueueSubmit(context->device.graphics_queue, 1, &submit_info, NULL);
+    vkQueueWaitIdle(context->device.graphics_queue);
 
-    vkFreeCommandBuffers(app->device, app->command_pool, 1, &command_buffer);
+    vkFreeCommandBuffers(context->device.logical_device,
+                         context->device.graphics_command_pool,
+                         1,
+                         &command_buffer);
 }
