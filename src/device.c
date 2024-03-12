@@ -168,7 +168,10 @@ void device_new(context *context) {
     printf("Graphics command pool created.\n");
 }
 
-void device_destroy(device *device) { vkDestroyDevice(device->logical_device, NULL); }
+void device_destroy(device *device) {
+    vkDestroyCommandPool(device->logical_device, device->graphics_command_pool, NULL);
+    vkDestroyDevice(device->logical_device, NULL);
+}
 
 void device_query_swapchain_support(VkPhysicalDevice physical_device,
                                     VkSurfaceKHR surface,

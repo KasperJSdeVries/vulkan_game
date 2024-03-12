@@ -273,6 +273,20 @@ void context_end_frame(context *context) {
 void context_end_main_loop(context *context) { vkDeviceWaitIdle(context->device.logical_device); }
 
 void context_cleanup(context *context) {
+    swapchain_destroy(context, &context->swapchain);
+
+    vkDestroyRenderPass(context->device.logical_device, context->render_pass, NULL);
+
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        vkDestroySemaphore(context->device.logical_device,
+                           context->image_available_semaphores[i],
+                           NULL);
+        vkDestroySemaphore(context->device.logical_device,
+                           context->render_finished_semaphores[i],
+                           NULL);
+        vkDestroyFence(context->device.logical_device, context->in_flight_fences[i], NULL);
+    }
+
     device_destroy(&context->device);
 
     vkDestroySurfaceKHR(context->instance, context->surface, NULL);

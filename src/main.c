@@ -287,6 +287,19 @@ int main() {
 
     context_end_main_loop(&render_context);
 
+    vkDestroyBuffer(render_context.device.logical_device, vertex_staging_buffer, NULL);
+    vkFreeMemory(render_context.device.logical_device, vertex_staging_buffer_memory, NULL);
+
+    vkDestroyBuffer(render_context.device.logical_device, vertex_buffer, NULL);
+    vkFreeMemory(render_context.device.logical_device, vertex_buffer_memory, NULL);
+
+    vkDestroyBuffer(render_context.device.logical_device, index_staging_buffer, NULL);
+    vkFreeMemory(render_context.device.logical_device, index_staging_buffer_memory, NULL);
+
+    vkDestroyBuffer(render_context.device.logical_device, index_buffer, NULL);
+    vkFreeMemory(render_context.device.logical_device, index_buffer_memory, NULL);
+
+    pipeline_destroy(&planet_pipeline, &render_context.device);
     context_cleanup(&render_context);
 }
 

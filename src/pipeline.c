@@ -337,6 +337,9 @@ void pipeline_bind(const pipeline *pipeline, VkCommandBuffer command_buffer, u32
 }
 
 void pipeline_destroy(pipeline *pipeline, device *device) {
+    vkDestroyBuffer(device->logical_device, pipeline->uniform_buffer, NULL);
+    vkFreeMemory(device->logical_device, pipeline->uniform_buffer_memory, NULL);
+
     vkDestroyDescriptorPool(device->logical_device, pipeline->descriptor_pool, NULL);
     vkDestroyDescriptorSetLayout(device->logical_device,
                                  pipeline->global_descriptor_set_layout,
@@ -344,10 +347,6 @@ void pipeline_destroy(pipeline *pipeline, device *device) {
 
     vkDestroyPipeline(device->logical_device, pipeline->handle, NULL);
     vkDestroyPipelineLayout(device->logical_device, pipeline->layout, NULL);
-
-    if (pipeline) {
-        free(pipeline);
-    }
 }
 
 /**************************************************************************************************
