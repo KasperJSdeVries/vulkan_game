@@ -1,6 +1,5 @@
 #include "context.h"
 
-#include "application.h"
 #include "darray.h"
 #include "device.h"
 #include "swapchain.h"
