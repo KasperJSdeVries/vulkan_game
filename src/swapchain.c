@@ -293,6 +293,10 @@ static void destroy(context *context, swapchain *swapchain) {
     vkDestroyImage(context->device.logical_device, swapchain->depth_image, NULL);
     vkFreeMemory(context->device.logical_device, swapchain->depth_image_memory, NULL);
 
+    swapchain->depth_image_view = VK_NULL_HANDLE;
+    swapchain->depth_image = VK_NULL_HANDLE;
+    swapchain->depth_image_memory = VK_NULL_HANDLE;
+
     for (u32 i = 0; i < swapchain->image_count; i++) {
         vkDestroyFramebuffer(context->device.logical_device, swapchain->framebuffers[i], NULL);
     }
@@ -302,8 +306,11 @@ static void destroy(context *context, swapchain *swapchain) {
     }
 
     free(swapchain->images);
+    swapchain->images = NULL;
     free(swapchain->image_views);
+    swapchain->image_views = NULL;
     free(swapchain->framebuffers);
+    swapchain->framebuffers = NULL;
 
     vkDestroySwapchainKHR(context->device.logical_device, swapchain->handle, NULL);
 }

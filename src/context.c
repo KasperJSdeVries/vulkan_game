@@ -176,7 +176,7 @@ context_begin_frame_start:
     VK_CHECK(vkBeginCommandBuffer(command_buffer, &begin_info));
 
     VkClearValue clear_values[] = {
-        (VkClearValue){.color = {{0.0f, 0.0f, 0.0f, 1.0f}}},
+        (VkClearValue){.color = {{0.2f, 0.2f, 0.2f, 1.0f}}},
         (VkClearValue){.depthStencil = {1.0f, 0}},
     };
 
