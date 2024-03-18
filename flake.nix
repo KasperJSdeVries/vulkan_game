@@ -53,8 +53,15 @@
         };
 
         devShells.default = pkgs.mkShell {
-          inherit nativeBuildInputs buildInputs VK_LAYER_PATH STB_INCLUDE_PATH;
+          inherit nativeBuildInputs VK_LAYER_PATH STB_INCLUDE_PATH;
           inherit (self.checks.${system}.pre-commit-check) shellHook;
+
+          buildInputs =
+            buildInputs
+            ++ (with pkgs; [
+              alejandra
+              cmake-format
+            ]);
         };
 
         checks = {
