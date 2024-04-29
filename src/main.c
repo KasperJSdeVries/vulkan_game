@@ -37,106 +37,62 @@ typedef struct {
 } UniformBufferObject;
 
 typedef struct {
-    u32 vertex_count;
-    vec3s *vertices;
-    u32 *indices;
-    u64 triangles_length;
-} Mesh;
+    f32 altitude;
+    vec3s displacement;
+} HeightmapVertex;
 
 typedef struct {
-    Mesh mesh;
-    i32 resolution;
-    vec3s local_up;
-    vec3s axis_a;
-    vec3s axis_b;
-} TerrainFace;
+    f32 vertices_per_run;
+    f32 vertices_per_run_not_degenerate;
+} Params;
 
-static TerrainFace create_terrain_face(int resolution, vec3s local_up) {
-    TerrainFace terrain_face;
-    terrain_face.resolution = resolution;
-    terrain_face.local_up = local_up;
-    terrain_face.axis_a = (vec3s){local_up.y, local_up.z, local_up.x};
-    terrain_face.axis_b = glms_vec3_cross(local_up, terrain_face.axis_a);
+#define HEIGHTMAP_SIZE 32
+#define HEIGHTMAP_SIZE_SQUARED (HEIGHTMAP_SIZE * HEIGHTMAP_SIZE)
 
-    return terrain_face;
-}
+#define VERTICES_PER_RUN (HEIGHTMAP_SIZE * 2 + 4)
+#define VERTICES_PER_CHUNK (VERTICES_PER_RUN * HEIGHTMAP_SIZE)
+#define VERTICES_PER_RUN_NOT_DEGENERATE (VERTICES_PER_RUN - 3)
 
-static void terrain_face_construct_mesh(TerrainFace *terrain_face) {
-    if (terrain_face->mesh.vertices) {
-        free(terrain_face->mesh.vertices);
-    }
-    if (terrain_face->mesh.indices) {
-        free(terrain_face->mesh.indices);
-    }
+f32 get_height(i32 x, i32 z) { return sinf(x * 0.5f) + cosf(z * 0.25f) * 2.0f; }
 
-    terrain_face->mesh.vertex_count = terrain_face->resolution * terrain_face->resolution;
+void generate_buffer(HeightmapVertex **buffer, u64 *buffer_size) {
+    *buffer_size = VERTICES_PER_CHUNK * sizeof(HeightmapVertex);
+    *buffer = calloc(VERTICES_PER_CHUNK, sizeof(HeightmapVertex));
 
-    terrain_face->mesh.vertices = malloc(terrain_face->mesh.vertex_count * sizeof(vec3s));
+    u64 index = 0;
+    for (i32 z = 0; z < HEIGHTMAP_SIZE; z++) {
+        i32 x = 0;
 
-    terrain_face->mesh.triangles_length =
-        (terrain_face->resolution - 1) * (terrain_face->resolution - 1) * 6;
+        f32 altitude0 = get_height(x, z);
+        f32 altitude1 = get_height(x, z + 1);
+        f32 altitude2 = get_height(x + 1, z);
 
-    terrain_face->mesh.indices = malloc(terrain_face->mesh.triangles_length * sizeof(u32));
+        // is degenerate
+        (*buffer)[index++].altitude = altitude0;
 
-    u32 triangle_index = 0;
-    for (int y = 0; y < terrain_face->resolution; y++) {
-        for (int x = 0; x < terrain_face->resolution; x++) {
-            u32 i = x + y * terrain_face->resolution;
-            vec2s percent = glms_vec2_divs((vec2s){x, y}, (terrain_face->resolution - 1));
-            // local_up
-            // + (percent.x - 0.5f) * 2.0f * axis_a
-            // + (percent.y - 0.5f) * 2.0f * axis_b
-            vec3s point_on_unit_cube = glms_vec3_add(
-                terrain_face->local_up,
-                glms_vec3_add(glms_vec3_scale(terrain_face->axis_a, (percent.x - 0.5f) * 2.0f),
-                              glms_vec3_scale(terrain_face->axis_b, (percent.y - 0.5f) * 2.0f)));
-            vec3s point_on_unit_sphere = glms_vec3_normalize(point_on_unit_cube);
-            terrain_face->mesh.vertices[i] = point_on_unit_sphere;
+        // first triangle
+        (*buffer)[index++].altitude = altitude0;
+        (*buffer)[index++].altitude = altitude1;
+        (*buffer)[index++].altitude = altitude2;
 
-            if (x != terrain_face->resolution - 1 && y != terrain_face->resolution - 1) {
-                terrain_face->mesh.indices[triangle_index] = i;
-                terrain_face->mesh.indices[triangle_index + 1] = i + terrain_face->resolution + 1;
-                terrain_face->mesh.indices[triangle_index + 2] = i + terrain_face->resolution;
+        x += 1;
+        f32 altitude = get_height(x, z + 1);
+        (*buffer)[index++].altitude = altitude;
 
-                terrain_face->mesh.indices[triangle_index + 3] = i;
-                terrain_face->mesh.indices[triangle_index + 4] = i + 1;
-                terrain_face->mesh.indices[triangle_index + 5] = i + terrain_face->resolution + 1;
-                triangle_index += 6;
-            }
+        x += 1;
+        for (; x <= HEIGHTMAP_SIZE; x++) {
+            altitude = get_height(x, z);
+            (*buffer)[index++].altitude = altitude;
+
+            altitude = get_height(x, z + 1);
+            (*buffer)[index++].altitude = altitude;
         }
+
+        // degenerate
+        altitude = get_height(x - 1, z + 1);
+        (*buffer)[index++].altitude = altitude;
     }
 }
-
-#define FACES_PER_PLANET 6
-
-typedef struct {
-    TerrainFace terrain_faces[FACES_PER_PLANET];
-} Planet;
-
-static Planet create_planet() {
-    Planet planet = {};
-    int resolution = 4;
-    vec3s directions[] = {
-        {0, 0, 1},
-        {0, 0, -1},
-        {0, 1, 0},
-        {0, -1, 0},
-        {1, 0, 0},
-        {-1, 0, 0},
-    };
-
-    for (int i = 0; i < FACES_PER_PLANET; i++) {
-        planet.terrain_faces[i] = create_terrain_face(resolution, directions[i]);
-    }
-
-    return planet;
-};
-
-static void planet_generate_meshes(Planet *planet) {
-    for (int i = 0; i < FACES_PER_PLANET; i++) {
-        terrain_face_construct_mesh(&planet->terrain_faces[i]);
-    }
-};
 
 f32 pitch = 0, yaw = -90.0f;
 f32 last_x = 400, last_y = 300;
@@ -186,23 +142,30 @@ int main() {
 
     pipeline_builder planet_pipeline_builder = pipeline_builder_new(&render_context);
     pipeline_builder_set_ubo_size(&planet_pipeline_builder, sizeof(UniformBufferObject));
-    pipeline_builder_add_input_binding(&planet_pipeline_builder, 0, sizeof(vec3s));
+    pipeline_builder_set_topology(&planet_pipeline_builder, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
+    pipeline_builder_add_input_binding(&planet_pipeline_builder, 0, sizeof(HeightmapVertex));
     pipeline_builder_add_input_attribute(&planet_pipeline_builder,
                                          0,
                                          0,
-                                         VK_FORMAT_R32G32B32A32_SFLOAT,
-                                         0);
+                                         VK_FORMAT_R32_SFLOAT,
+                                         offsetof(HeightmapVertex, altitude));
+    pipeline_builder_add_input_attribute(&planet_pipeline_builder,
+                                         0,
+                                         1,
+                                         VK_FORMAT_R32G32B32_SFLOAT,
+                                         offsetof(HeightmapVertex, displacement));
+    pipeline_builder_add_push_constant(&planet_pipeline_builder,
+                                       VK_SHADER_STAGE_VERTEX_BIT,
+                                       sizeof(Params));
     pipeline_builder_set_shaders(&planet_pipeline_builder,
-                                 "shaders/simple.vert.spv",
-                                 "shaders/simple.frag.spv");
+                                 "shaders/terrain_vectors.vert.spv",
+                                 "shaders/terrain_vectors.frag.spv");
     pipeline planet_pipeline =
         pipeline_builder_build(&planet_pipeline_builder, render_context.render_pass);
 
-    Planet planet = create_planet();
-    planet_generate_meshes(&planet);
-
-    VkDeviceSize vertex_buffer_size =
-        sizeof(vec3s) * (planet.terrain_faces[0].mesh.vertex_count + 1);
+    u64 vertex_buffer_size;
+    HeightmapVertex *vertex_buffer_data;
+    generate_buffer(&vertex_buffer_data, &vertex_buffer_size);
 
     VkBuffer vertex_staging_buffer;
     VkDeviceMemory vertex_staging_buffer_memory;
@@ -222,63 +185,18 @@ int main() {
                 0,
                 &vertex_staging_buffer_memory_mapped);
 
-    VkBuffer vertex_buffers[FACES_PER_PLANET];
-    VkDeviceMemory vertex_buffer_memories[FACES_PER_PLANET];
-    for (u32 i = 0; i < FACES_PER_PLANET; i++) {
-        context_create_buffer(&render_context,
-                              vertex_buffer_size,
-                              VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                              &vertex_buffers[i],
-                              &vertex_buffer_memories[i]);
-
-        for (u32 j = 0; j < planet.terrain_faces[i].mesh.vertex_count; j++) {
-            vec3s vertex = planet.terrain_faces[i].mesh.vertices[j];
-        }
-
-        memcpy(vertex_staging_buffer_memory_mapped,
-               planet.terrain_faces[i].mesh.vertices,
-               vertex_buffer_size);
-
-        copy_buffer(&render_context, vertex_staging_buffer, vertex_buffers[i], vertex_buffer_size);
-    }
-
-    VkDeviceSize index_buffer_size = sizeof(u32) * planet.terrain_faces[0].mesh.triangles_length;
-
-    VkBuffer index_staging_buffer;
-    VkDeviceMemory index_staging_buffer_memory;
-
-    VkBuffer index_buffers;
-    VkDeviceMemory index_buffer_memories;
-
+    VkBuffer vertex_buffer;
+    VkDeviceMemory vertex_buffer_memory;
     context_create_buffer(&render_context,
-                          index_buffer_size,
-                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                          &index_staging_buffer,
-                          &index_staging_buffer_memory);
-
-    void *index_staging_buffer_memory_mapped;
-    vkMapMemory(render_context.device.logical_device,
-                index_staging_buffer_memory,
-                0,
-                index_buffer_size,
-                0,
-                &index_staging_buffer_memory_mapped);
-
-    context_create_buffer(&render_context,
-                          index_buffer_size,
-                          VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                          vertex_buffer_size,
+                          VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                          &index_buffers,
-                          &index_buffer_memories);
+                          &vertex_buffer,
+                          &vertex_buffer_memory);
 
-    memcpy(index_staging_buffer_memory_mapped,
-           planet.terrain_faces[0].mesh.indices,
-           index_buffer_size);
+    memcpy(vertex_staging_buffer_memory_mapped, vertex_buffer_data, vertex_buffer_size);
 
-    copy_buffer(&render_context, index_staging_buffer, index_buffers, index_buffer_size);
+    copy_buffer(&render_context, vertex_staging_buffer, vertex_buffer, vertex_buffer_size);
 
     context_begin_main_loop(&render_context);
 
@@ -292,6 +210,11 @@ int main() {
     f32 last_time;
     f32 last_second = glfwGetTime();
     u16 frames = 0;
+
+    Params params = {
+        .vertices_per_run = VERTICES_PER_RUN,
+        .vertices_per_run_not_degenerate = VERTICES_PER_RUN_NOT_DEGENERATE,
+    };
 
     while (!glfwWindowShouldClose(window)) {
         f32 current_time = glfwGetTime();
@@ -312,20 +235,18 @@ int main() {
 
         pipeline_bind(&planet_pipeline, command_buffer, render_context.current_frame);
 
-        vkCmdBindIndexBuffer(command_buffer, index_buffers, 0, VK_INDEX_TYPE_UINT32);
+        VkBuffer buffers[] = {vertex_buffer};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(command_buffer, 0, 1, buffers, offsets);
 
-        for (u32 i = 0; i < FACES_PER_PLANET; i++) {
-            VkBuffer buffers[] = {vertex_buffers[i]};
-            VkDeviceSize offsets[] = {0};
-            vkCmdBindVertexBuffers(command_buffer, 0, 1, buffers, offsets);
+        vkCmdPushConstants(command_buffer,
+                           planet_pipeline.layout,
+                           VK_SHADER_STAGE_VERTEX_BIT,
+                           0,
+                           sizeof(Params),
+                           &params);
 
-            vkCmdDrawIndexed(command_buffer,
-                             planet.terrain_faces[i].mesh.triangles_length,
-                             1,
-                             0,
-                             0,
-                             0);
-        }
+        vkCmdDraw(command_buffer, VERTICES_PER_CHUNK, 1, 0, 0);
 
         context_end_frame(&render_context);
 
@@ -359,16 +280,8 @@ int main() {
     vkDestroyBuffer(render_context.device.logical_device, vertex_staging_buffer, NULL);
     vkFreeMemory(render_context.device.logical_device, vertex_staging_buffer_memory, NULL);
 
-    for (u32 i = 0; i < FACES_PER_PLANET; i++) {
-        vkDestroyBuffer(render_context.device.logical_device, vertex_buffers[i], NULL);
-        vkFreeMemory(render_context.device.logical_device, vertex_buffer_memories[i], NULL);
-    }
-
-    vkDestroyBuffer(render_context.device.logical_device, index_staging_buffer, NULL);
-    vkFreeMemory(render_context.device.logical_device, index_staging_buffer_memory, NULL);
-
-    vkDestroyBuffer(render_context.device.logical_device, index_buffers, NULL);
-    vkFreeMemory(render_context.device.logical_device, index_buffer_memories, NULL);
+    vkDestroyBuffer(render_context.device.logical_device, vertex_buffer, NULL);
+    vkFreeMemory(render_context.device.logical_device, vertex_buffer_memory, NULL);
 
     pipeline_destroy(&planet_pipeline, &render_context.device);
     context_cleanup(&render_context);

@@ -1,5 +1,7 @@
 #version 450
 
+layout (location = 0) out vec3 out_colour;
+
 layout (location = 0) in float aAltitude;
 layout (location = 1) in vec3 displacement;
 
@@ -26,4 +28,6 @@ void main() {
 
     vec3 pos = vec3(x_pos, aAltitude, z_pos) + displacement;
     gl_Position = ubo.projection * ubo.view * ubo.model * vec4(pos, 1.0);
+
+    out_colour = pos;
 }
