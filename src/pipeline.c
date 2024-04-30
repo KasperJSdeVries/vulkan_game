@@ -21,6 +21,7 @@ static u32 *read_file(const char *file_name, u64 *out_size);
 pipeline_builder pipeline_builder_new(const context *context) {
     pipeline_builder builder = {
         .context = context,
+        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
         .vertex_input_attributes = darray_create(VkVertexInputAttributeDescription),
         .vertex_input_bindings = darray_create(VkVertexInputBindingDescription),
         .push_constant_ranges = darray_create(VkPushConstantRange),
@@ -104,6 +105,10 @@ void pipeline_builder_set_ubo_size(pipeline_builder *builder, u64 ubo_size) {
     builder->ubo_size = ubo_size;
 }
 
+void pipeline_builder_set_topology(pipeline_builder *builder, VkPrimitiveTopology topology) {
+    builder->topology = topology;
+}
+
 void pipeline_builder_add_push_constant(pipeline_builder *builder,
                                         VkShaderStageFlagBits shader_stage,
                                         u32 size) {
@@ -150,7 +155,7 @@ pipeline pipeline_builder_build(pipeline_builder *builder, VkRenderPass render_p
 
     VkPipelineInputAssemblyStateCreateInfo input_assembly_state = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+        .topology = builder->topology,
         .primitiveRestartEnable = VK_FALSE,
     };
 
