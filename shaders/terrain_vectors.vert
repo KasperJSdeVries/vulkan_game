@@ -3,7 +3,6 @@
 layout (location = 0) out vec3 out_colour;
 
 layout (location = 0) in float aAltitude;
-layout (location = 1) in vec3 displacement;
 
 layout (binding = 0) uniform UniformBufferObject {
     mat4 model;
@@ -26,7 +25,7 @@ void main() {
 
     z_pos += mod(clamped_index, 2.0);
 
-    vec3 pos = vec3(x_pos, aAltitude, z_pos) + displacement;
+    vec3 pos = vec3(x_pos, aAltitude, z_pos);
     gl_Position = ubo.projection * ubo.view * ubo.model * vec4(pos, 1.0);
 
     out_colour = pos;

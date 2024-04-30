@@ -38,7 +38,6 @@ typedef struct {
 
 typedef struct {
     f32 altitude;
-    vec3s displacement;
 } HeightmapVertex;
 
 typedef struct {
@@ -59,6 +58,7 @@ void generate_buffer(HeightmapVertex **buffer, u64 *buffer_size) {
     *buffer_size = VERTICES_PER_CHUNK * sizeof(HeightmapVertex);
     *buffer = calloc(VERTICES_PER_CHUNK, sizeof(HeightmapVertex));
 
+    f32 extra_height = 0.0f;
     u64 index = 0;
     for (i32 z = 0; z < HEIGHTMAP_SIZE; z++) {
         i32 x = 0;
@@ -149,11 +149,6 @@ int main() {
                                          0,
                                          VK_FORMAT_R32_SFLOAT,
                                          offsetof(HeightmapVertex, altitude));
-    pipeline_builder_add_input_attribute(&planet_pipeline_builder,
-                                         0,
-                                         1,
-                                         VK_FORMAT_R32G32B32_SFLOAT,
-                                         offsetof(HeightmapVertex, displacement));
     pipeline_builder_add_push_constant(&planet_pipeline_builder,
                                        VK_SHADER_STAGE_VERTEX_BIT,
                                        sizeof(Params));
