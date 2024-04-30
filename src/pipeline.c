@@ -23,6 +23,7 @@ pipeline_builder pipeline_builder_new(const context *context) {
         .context = context,
         .vertex_input_attributes = darray_create(VkVertexInputAttributeDescription),
         .vertex_input_bindings = darray_create(VkVertexInputBindingDescription),
+        .push_constant_ranges = darray_create(VkPushConstantRange),
     };
 
     return builder;
@@ -101,6 +102,18 @@ void pipeline_builder_add_input_attribute(pipeline_builder *builder,
 
 void pipeline_builder_set_ubo_size(pipeline_builder *builder, u64 ubo_size) {
     builder->ubo_size = ubo_size;
+}
+
+void pipeline_builder_add_push_constant(pipeline_builder *builder,
+                                        VkShaderStageFlagBits shader_stage,
+                                        u32 size) {
+    VkPushConstantRange range = {
+        .stageFlags = shader_stage,
+        .offset = 0,
+        .size = size,
+    };
+
+    darray_push(builder->push_constant_ranges, range);
 }
 
 pipeline pipeline_builder_build(pipeline_builder *builder, VkRenderPass render_pass) {
@@ -203,6 +216,8 @@ pipeline pipeline_builder_build(pipeline_builder *builder, VkRenderPass render_p
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
         .pSetLayouts = &pipeline.global_descriptor_set_layout,
+        .pushConstantRangeCount = darray_length(builder->push_constant_ranges),
+        .pPushConstantRanges = builder->push_constant_ranges,
     };
 
     VK_CHECK(vkCreatePipelineLayout(builder->context->device.logical_device,

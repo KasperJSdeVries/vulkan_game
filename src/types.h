@@ -81,6 +81,8 @@ typedef struct {
     VkVertexInputAttributeDescription *vertex_input_attributes; // darray
 
     u64 ubo_size;
+
+    VkPushConstantRange *push_constant_ranges; // darray
 } pipeline_builder;
 
 typedef struct {
