@@ -76,11 +76,14 @@ void pipeline_builder_set_shaders(pipeline_builder *builder,
     builder->shader_stages[1] = fragment_shader_stage_info;
 }
 
-void pipeline_builder_add_input_binding(pipeline_builder *builder, u32 binding, u64 stride) {
+void pipeline_builder_add_input_binding(pipeline_builder *builder,
+                                        u32 binding,
+                                        u64 stride,
+                                        VkVertexInputRate input_rate) {
     VkVertexInputBindingDescription description = {
         .binding = binding,
         .stride = stride,
-        .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+        .inputRate = input_rate,
     };
 
     darray_push(builder->vertex_input_bindings, description);

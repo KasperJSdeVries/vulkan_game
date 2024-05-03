@@ -11,7 +11,10 @@ pipeline_builder pipeline_builder_new(const context *context);
 void pipeline_builder_set_shaders(pipeline_builder *builder,
                                   const char *vertex_shader_path,
                                   const char *fragment_shader_path);
-void pipeline_builder_add_input_binding(pipeline_builder *builder, u32 binding, u64 stride);
+void pipeline_builder_add_input_binding(pipeline_builder *builder,
+                                        u32 binding,
+                                        u64 stride,
+                                        VkVertexInputRate input_rate);
 void pipeline_builder_add_input_attribute(pipeline_builder *builder,
                                           u32 binding,
                                           u32 location,
