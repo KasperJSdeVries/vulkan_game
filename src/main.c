@@ -186,11 +186,14 @@ int main() {
 
     pipeline_builder planet_pipeline_builder = pipeline_builder_new(&render_context);
     pipeline_builder_set_ubo_size(&planet_pipeline_builder, sizeof(UniformBufferObject));
-    pipeline_builder_add_input_binding(&planet_pipeline_builder, 0, sizeof(vec3s));
+    pipeline_builder_add_input_binding(&planet_pipeline_builder,
+                                       0,
+                                       sizeof(vec3s),
+                                       VK_VERTEX_INPUT_RATE_VERTEX);
     pipeline_builder_add_input_attribute(&planet_pipeline_builder,
                                          0,
                                          0,
-                                         VK_FORMAT_R32G32B32A32_SFLOAT,
+                                         VK_FORMAT_R32G32B32_SFLOAT,
                                          0);
     pipeline_builder_set_shaders(&planet_pipeline_builder,
                                  "shaders/simple.vert.spv",
