@@ -6,7 +6,7 @@ project(
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -Wall -Wextra")
 
 find_package(glfw3 3.3 REQUIRED)
 find_package(Vulkan REQUIRED)
@@ -37,6 +37,7 @@ set(SOURCES
     src/context.c
     src/darray.c
     src/device.c
+    src/json.c
     src/main.c
     src/pipeline.c
     src/swapchain.c)
