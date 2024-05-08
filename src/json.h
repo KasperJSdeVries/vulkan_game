@@ -52,4 +52,6 @@ typedef struct _json_value {
 json_value *json_parse(const char *json, u64 length);
 void json_value_free(json_value *);
 
+json_value *json_object_get_value(json_value *object, const char *key);
+
 #endif // JSON_H

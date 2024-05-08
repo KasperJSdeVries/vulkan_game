@@ -3,6 +3,7 @@
 #include "defines.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -28,15 +29,15 @@ void json_value_free(json_value *value) {
     switch (value->type) {
     case JSON_VALUE_OBJECT:
         for (u32 i = 0; i < value->u.object.length; i++) {
-            free(value->u.object.values[i].key);
             json_value_free(value->u.object.values[i].value);
+            free(value->u.object.values[i].key);
         }
         break;
     case JSON_VALUE_ARRAY:
         for (u32 i = 0; i < value->u.array.length; i++) {
             json_value_free(value->u.array.values[i]);
-            free(value->u.array.values);
         }
+        free(value->u.array.values);
         break;
     case JSON_VALUE_STRING:
         free(value->u.string.ptr);
@@ -45,6 +46,26 @@ void json_value_free(json_value *value) {
         break;
     }
     free(value);
+}
+
+json_value *json_object_get_value(json_value *object, const char *key) {
+    if (object->type != JSON_VALUE_OBJECT) {
+        return NULL;
+    }
+
+    u32 key_length = strlen(key);
+
+    for (u32 i = 0; i < object->u.object.length; i++) {
+        if (object->u.object.values[i].key_length != key_length)
+            continue;
+
+        if (strncmp(object->u.object.values[i].key, key, object->u.object.values[i].key_length) ==
+            0) {
+            return object->u.object.values[i].value;
+        }
+    }
+
+    return NULL;
 }
 
 static void skip_whitespace(parse_state *state) {
@@ -168,6 +189,7 @@ static json_value *json_parse_impl(parse_state *state, json_value *parent) {
     skip_whitespace(state);
 
     if (state->current_offset >= state->json_length) {
+        fprintf(stderr, "JSON: Invalid string input\n");
         return NULL;
     }
 
@@ -182,11 +204,13 @@ static json_value *json_parse_impl(parse_state *state, json_value *parent) {
             json_object_member member = {0};
             if (!parse_string(state, &member.key_length, &member.key)) {
                 darray_destroy(members);
+                fprintf(stderr, "JSON: expected key string at: %llu\n", state->current_offset);
                 return NULL;
             }
             skip_whitespace(state);
             if (!assert_current(state, ':')) {
                 darray_destroy(members);
+                fprintf(stderr, "JSON: expected ':' at: %llu\n", state->current_offset);
                 return NULL;
             }
             member.value = json_parse_impl(state, value);
@@ -195,8 +219,10 @@ static json_value *json_parse_impl(parse_state *state, json_value *parent) {
                 break;
             }
         }
+
         if (!assert_current(state, '}')) {
             darray_destroy(members);
+            fprintf(stderr, "JSON: expected '}' at: %llu\n", state->current_offset);
             return NULL;
         }
 
@@ -232,6 +258,12 @@ static json_value *json_parse_impl(parse_state *state, json_value *parent) {
             if (!assert_current(state, ',')) {
                 break;
             }
+        }
+
+        if (!assert_current(state, ']')) {
+            darray_destroy(values);
+            fprintf(stderr, "JSON: expected ']' at: %llu\n", state->current_offset);
+            return NULL;
         }
 
         value->type = JSON_VALUE_ARRAY;
@@ -270,7 +302,7 @@ static json_value *json_parse_impl(parse_state *state, json_value *parent) {
         }
 
         i64 decimal_part = 0;
-        for (u32 exponent = 1, i = decimal_part_length + decimal_part_start;
+        for (u32 exponent = 1, i = decimal_part_start + (decimal_part_length - 1);
              i >= decimal_part_start;
              i--, exponent *= 10) {
             decimal_part += (state->json[i] - '0') * exponent;
@@ -279,7 +311,7 @@ static json_value *json_parse_impl(parse_state *state, json_value *parent) {
         if (is_negative)
             decimal_part *= -1;
 
-        if (!(current(state) == '.' || current(state) == 'e' || current(state) == 'E')) {
+        if ((current(state) != '.') && (current(state) != 'e') && (current(state) != 'E')) {
             value->type = JSON_VALUE_INTEGER;
             value->u.integer = decimal_part;
             return value;
@@ -369,6 +401,8 @@ static json_value *json_parse_impl(parse_state *state, json_value *parent) {
             return NULL;
         }
     }
+
+    skip_whitespace(state);
 
     return value;
 }

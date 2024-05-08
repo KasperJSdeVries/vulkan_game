@@ -1,34 +1,21 @@
 #include "command_buffer.h"
 #include "context.h"
-#include "darray.h"
 #include "defines.h"
-#include "device.h"
+#include "gltf.h"
 #include "pipeline.h"
 #include "types.h"
-#include "vulkan/vulkan_core.h"
-
-#define GLM_FORCE_RADIANS
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
-#include <cglm/struct.h>
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
 #include <stdbool.h>
 #include <stddef.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define WIDTH 1280
 #define HEIGHT 720
-
-static void copy_buffer(const context *context,
-                        VkBuffer src_buffer,
-                        VkBuffer dst_buffer,
-                        VkDeviceSize size);
 
 typedef struct {
     mat4s model;
@@ -51,11 +38,29 @@ typedef struct {
     vec3s axis_b;
 } TerrainFace;
 
+typedef struct {
+    vec3s position;
+    vec3s front;
+    vec3s up;
+} Camera;
+
+#define FACES_PER_PLANET 6
+
+typedef struct {
+    TerrainFace terrain_faces[FACES_PER_PLANET];
+} Planet;
+
+static void copy_buffer(const context *context,
+                        VkBuffer src_buffer,
+                        VkBuffer dst_buffer,
+                        VkDeviceSize size);
+static void process_input(GLFWwindow *window, Camera *camera, f32 delta_time);
+
 static TerrainFace create_terrain_face(int resolution, vec3s local_up) {
     TerrainFace terrain_face;
     terrain_face.resolution = resolution;
     terrain_face.local_up = local_up;
-    terrain_face.axis_a = (vec3s){local_up.y, local_up.z, local_up.x};
+    terrain_face.axis_a = (vec3s){{local_up.y, local_up.z, local_up.x}};
     terrain_face.axis_b = glms_vec3_cross(local_up, terrain_face.axis_a);
 
     return terrain_face;
@@ -82,7 +87,7 @@ static void terrain_face_construct_mesh(TerrainFace *terrain_face) {
     for (int y = 0; y < terrain_face->resolution; y++) {
         for (int x = 0; x < terrain_face->resolution; x++) {
             u32 i = x + y * terrain_face->resolution;
-            vec2s percent = glms_vec2_divs((vec2s){x, y}, (terrain_face->resolution - 1));
+            vec2s percent = glms_vec2_divs((vec2s){{x, y}}, (terrain_face->resolution - 1));
             // local_up
             // + (percent.x - 0.5f) * 2.0f * axis_a
             // + (percent.y - 0.5f) * 2.0f * axis_b
@@ -107,22 +112,16 @@ static void terrain_face_construct_mesh(TerrainFace *terrain_face) {
     }
 }
 
-#define FACES_PER_PLANET 6
-
-typedef struct {
-    TerrainFace terrain_faces[FACES_PER_PLANET];
-} Planet;
-
 static Planet create_planet() {
     Planet planet = {};
     int resolution = 4;
     vec3s directions[] = {
-        {0, 0, 1},
-        {0, 0, -1},
-        {0, 1, 0},
-        {0, -1, 0},
-        {1, 0, 0},
-        {-1, 0, 0},
+        {{0, 0, 1}},
+        {{0, 0, -1}},
+        {{0, 1, 0}},
+        {{0, -1, 0}},
+        {{1, 0, 0}},
+        {{-1, 0, 0}},
     };
 
     for (int i = 0; i < FACES_PER_PLANET; i++) {
@@ -141,6 +140,8 @@ static void planet_generate_meshes(Planet *planet) {
 f32 pitch = 0, yaw = -90.0f;
 f32 last_x = 400, last_y = 300;
 static void mouse_callback(GLFWwindow *window, double x_position, double y_position) {
+    (void)window;
+
     f32 x_offset = x_position - last_x;
     f32 y_offset = last_y - y_position;
     last_x = x_position;
@@ -172,17 +173,12 @@ static GLFWwindow *create_window() {
     return window;
 }
 
-typedef struct {
-    vec3s position;
-    vec3s front;
-    vec3s up;
-} Camera;
-
-static void process_input(GLFWwindow *window, Camera *camera, f32 delta_time);
-
 int main() {
     GLFWwindow *window = create_window();
     context render_context = context_new(window);
+
+    gltf_root gltf;
+    load_gltf_from_file("models/tire.glb", &gltf);
 
     pipeline_builder planet_pipeline_builder = pipeline_builder_new(&render_context);
     pipeline_builder_set_ubo_size(&planet_pipeline_builder, sizeof(UniformBufferObject));
@@ -204,8 +200,7 @@ int main() {
     Planet planet = create_planet();
     planet_generate_meshes(&planet);
 
-    VkDeviceSize vertex_buffer_size =
-        sizeof(vec3s) * (planet.terrain_faces[0].mesh.vertex_count + 1);
+    VkDeviceSize vertex_buffer_size = sizeof(vec3s) * (planet.terrain_faces[0].mesh.vertex_count);
 
     VkBuffer vertex_staging_buffer;
     VkDeviceMemory vertex_staging_buffer_memory;
@@ -234,10 +229,6 @@ int main() {
                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                               &vertex_buffers[i],
                               &vertex_buffer_memories[i]);
-
-        for (u32 j = 0; j < planet.terrain_faces[i].mesh.vertex_count; j++) {
-            vec3s vertex = planet.terrain_faces[i].mesh.vertices[j];
-        }
 
         memcpy(vertex_staging_buffer_memory_mapped,
                planet.terrain_faces[i].mesh.vertices,
@@ -286,13 +277,13 @@ int main() {
     context_begin_main_loop(&render_context);
 
     Camera camera = {
-        {0.0, 0.0, 5.0},
-        {0.0, 0.0, -1.0},
-        {0.0, 1.0, 0.0},
+        {{0.0, 0.0, 5.0}},
+        {{0.0, 0.0, -1.0}},
+        {{0.0, 1.0, 0.0}},
     };
 
     f32 delta_time;
-    f32 last_time;
+    f32 last_time = 0.0;
     f32 last_second = glfwGetTime();
     u16 frames = 0;
 
@@ -332,11 +323,11 @@ int main() {
 
         context_end_frame(&render_context);
 
-        vec3s direction = {
+        vec3s direction = {{
             cos(glm_rad(yaw)) * cos(glm_rad(pitch)),
             sin(glm_rad(pitch)),
             sin(glm_rad(yaw)) * cos(glm_rad(pitch)),
-        };
+        }};
         camera.front = glms_vec3_normalize(direction);
 
         UniformBufferObject ubo = {
@@ -375,6 +366,9 @@ int main() {
 
     pipeline_destroy(&planet_pipeline, &render_context.device);
     context_cleanup(&render_context);
+
+    glfwDestroyWindow(window);
+    glfwTerminate();
 }
 
 static void copy_buffer(const context *context,

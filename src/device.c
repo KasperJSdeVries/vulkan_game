@@ -222,7 +222,7 @@ b8 device_detect_depth_format(device *device) {
     };
 
     u32 flags = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
-    for (int i = 0; i < sizeof(candidates) / sizeof(VkFormat); i++) {
+    for (u32 i = 0; i < sizeof(candidates) / sizeof(VkFormat); i++) {
         VkFormatProperties properties;
         vkGetPhysicalDeviceFormatProperties(device->physical_device, candidates[i], &properties);
 
@@ -255,7 +255,10 @@ static b8 pick_physical_device(context *context) {
         .discrete_gpu = false,
         .device_extension_names = darray_create(const char *),
     };
-    darray_push(requirements.device_extension_names, &VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+
+    for (u32 i = 0; i < device_extenstion_count; i++) {
+        darray_push(requirements.device_extension_names, device_extenstions[i]);
+    }
 
     VkPhysicalDevice physical_devices[physical_device_count];
 
