@@ -7,6 +7,7 @@
 #include "device.h"
 #include "types.h"
 #include "vulkan/vulkan_core.h"
+#include <stdio.h>
 #include <vulkan/vulkan.h>
 
 #include <stdlib.h>
@@ -403,7 +404,9 @@ static u32 *read_file(const char *file_name, u64 *out_size) {
     fseek(fp, 0, SEEK_SET);
 
     u32 *buffer = malloc(*out_size);
-    u32 _ = fread(buffer, sizeof(char), *out_size, fp);
+    if (fread(buffer, sizeof(char), *out_size, fp) != *out_size) {
+        fprintf(stderr, "Failed to read whole file: %s\n", file_name);
+    }
 
     fclose(fp);
     return buffer;

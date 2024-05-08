@@ -132,7 +132,7 @@ void context_on_resized(context *context, u32 width, u32 height) {
     context->framebuffer_size_generation++;
 }
 
-void context_begin_main_loop(context *context) {}
+void context_begin_main_loop(context *context) { (void)context; }
 
 VkCommandBuffer context_begin_frame(context *context) {
 context_begin_frame_start:
@@ -360,6 +360,10 @@ debug_callback(VkDebugUtilsMessageSeverityFlagsEXT message_severity,
                VkDebugUtilsMessageTypeFlagsEXT message_type,
                const VkDebugUtilsMessengerCallbackDataEXT *callback_data,
                void *user_data) {
+    (void)message_severity;
+    (void)message_type;
+    (void)user_data;
+
     fprintf(stderr, "validation layer: %s\n", callback_data->pMessage);
 
     return VK_FALSE;
@@ -388,7 +392,7 @@ static const char **get_required_extensions() {
     glfw_extensions = glfwGetRequiredInstanceExtensions(&glfw_extension_count);
 
     const char **required_extensions = darray_create(const char *);
-    for (int i = 0; i < glfw_extension_count; ++i) {
+    for (u32 i = 0; i < glfw_extension_count; ++i) {
         darray_push(required_extensions, glfw_extensions[i]);
     }
 
@@ -419,7 +423,7 @@ static void create_render_pass(context *context) {
     VkSurfaceFormatKHR swapchain_image_format;
     b8 found = false;
 
-    for (int i = 0; i < context->device.swapchain_support.format_count; i++) {
+    for (u32 i = 0; i < context->device.swapchain_support.format_count; i++) {
         if (context->device.swapchain_support.formats[i].format == VK_FORMAT_B8G8R8A8_SRGB &&
             context->device.swapchain_support.formats[i].colorSpace ==
                 VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {

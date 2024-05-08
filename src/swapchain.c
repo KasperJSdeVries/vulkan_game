@@ -27,7 +27,7 @@ static void create(context *context, u32 width, u32 height, swapchain *swapchain
     VkExtent2D swapchain_extent = {width, height};
 
     b8 found = false;
-    for (int i = 0; i < context->device.swapchain_support.format_count; i++) {
+    for (u32 i = 0; i < context->device.swapchain_support.format_count; i++) {
         VkSurfaceFormatKHR format = context->device.swapchain_support.formats[i];
         if (format.format == VK_FORMAT_B8G8R8A8_SRGB &&
             format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
@@ -46,7 +46,7 @@ static void create(context *context, u32 width, u32 height, swapchain *swapchain
     if (false /* check for vsync toggle */) {
         present_mode = VK_PRESENT_MODE_FIFO_KHR;
         // prefer mailbox over fifo
-        for (int i = 0; i < context->device.swapchain_support.present_mode_count; i++) {
+        for (u32 i = 0; i < context->device.swapchain_support.present_mode_count; i++) {
             VkPresentModeKHR mode = context->device.swapchain_support.present_modes[i];
             if (mode == VK_PRESENT_MODE_MAILBOX_KHR) {
                 present_mode = mode;

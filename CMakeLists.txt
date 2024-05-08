@@ -37,6 +37,7 @@ set(SOURCES
     src/context.c
     src/darray.c
     src/device.c
+    src/gltf.c
     src/json.c
     src/main.c
     src/pipeline.c
@@ -65,6 +66,15 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/textures"
           "$<TARGET_FILE_DIR:${PROJECT_NAME}>/textures")
 
+add_custom_command(
+  TARGET ${PROJECT_NAME}
+  POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+          "$<TARGET_FILE_DIR:${PROJECT_NAME}>/models/"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/models"
+          "$<TARGET_FILE_DIR:${PROJECT_NAME}>/models")
+
 install(TARGETS ${PROJECT_NAME})
 install(DIRECTORY "$<TARGET_FILE_DIR:${PROJECT_NAME}>/shaders" TYPE DATA)
 install(DIRECTORY "$<TARGET_FILE_DIR:${PROJECT_NAME}>/textures" TYPE DATA)
+install(DIRECTORY "$<TARGET_FILE_DIR:${PROJECT_NAME}>/models" TYPE DATA)
