@@ -6,7 +6,6 @@
 #include "swapchain.h"
 #include "types.h"
 #include "vulkan/vulkan_core.h"
-#include <stdint.h>
 
 const char *validation_layers[] = {"VK_LAYER_KHRONOS_validation"};
 #define validation_layer_count sizeof(validation_layers) / sizeof(const char *)
