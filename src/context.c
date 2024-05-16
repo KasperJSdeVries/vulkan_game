@@ -1,5 +1,6 @@
 #include "context.h"
 
+#include "command_buffer.h"
 #include "darray.h"
 #include "device.h"
 #include "swapchain.h"
@@ -328,6 +329,23 @@ void context_create_buffer(const context *context,
     VK_CHECK(vkAllocateMemory(context->device.logical_device, &alloc_info, NULL, buffer_memory));
 
     vkBindBufferMemory(context->device.logical_device, *buffer, *buffer_memory, 0);
+}
+
+void context_copy_buffer(const context *context,
+                         VkBuffer src_buffer,
+                         VkBuffer dst_buffer,
+                         VkDeviceSize size) {
+    VkCommandBuffer command_buffer = begin_single_time_commands(context);
+
+    VkBufferCopy copy_region = {
+        .srcOffset = 0,
+        .dstOffset = 0,
+        .size = size,
+    };
+
+    vkCmdCopyBuffer(command_buffer, src_buffer, dst_buffer, 1, &copy_region);
+
+    end_single_time_commands(context, command_buffer);
 }
 
 static VkResult create_debug_utils_messenger_ext(

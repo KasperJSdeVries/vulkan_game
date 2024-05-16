@@ -50,10 +50,6 @@ typedef struct {
     TerrainFace terrain_faces[FACES_PER_PLANET];
 } Planet;
 
-static void copy_buffer(const context *context,
-                        VkBuffer src_buffer,
-                        VkBuffer dst_buffer,
-                        VkDeviceSize size);
 static void process_input(GLFWwindow *window, Camera *camera, f32 delta_time);
 
 static TerrainFace create_terrain_face(int resolution, vec3s local_up) {
@@ -234,7 +230,10 @@ int main() {
                planet.terrain_faces[i].mesh.vertices,
                vertex_buffer_size);
 
-        copy_buffer(&render_context, vertex_staging_buffer, vertex_buffers[i], vertex_buffer_size);
+        context_copy_buffer(&render_context,
+                            vertex_staging_buffer,
+                            vertex_buffers[i],
+                            vertex_buffer_size);
     }
 
     VkDeviceSize index_buffer_size = sizeof(u32) * planet.terrain_faces[0].mesh.triangles_length;
@@ -272,7 +271,7 @@ int main() {
            planet.terrain_faces[0].mesh.indices,
            index_buffer_size);
 
-    copy_buffer(&render_context, index_staging_buffer, index_buffers, index_buffer_size);
+    context_copy_buffer(&render_context, index_staging_buffer, index_buffers, index_buffer_size);
 
     context_begin_main_loop(&render_context);
 
@@ -369,23 +368,6 @@ int main() {
 
     glfwDestroyWindow(window);
     glfwTerminate();
-}
-
-static void copy_buffer(const context *context,
-                        VkBuffer src_buffer,
-                        VkBuffer dst_buffer,
-                        VkDeviceSize size) {
-    VkCommandBuffer command_buffer = begin_single_time_commands(context);
-
-    VkBufferCopy copy_region = {
-        .srcOffset = 0,
-        .dstOffset = 0,
-        .size = size,
-    };
-
-    vkCmdCopyBuffer(command_buffer, src_buffer, dst_buffer, 1, &copy_region);
-
-    end_single_time_commands(context, command_buffer);
 }
 
 static void process_input(GLFWwindow *window, Camera *camera, f32 delta_time) {

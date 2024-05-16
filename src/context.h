@@ -21,4 +21,9 @@ void context_create_buffer(const context *context,
                            VkBuffer *buffer,
                            VkDeviceMemory *buffer_memory);
 
+void context_copy_buffer(const context *context,
+                         VkBuffer src_buffer,
+                         VkBuffer dst_buffer,
+                         VkDeviceSize size);
+
 #endif // CONTEXT_H
