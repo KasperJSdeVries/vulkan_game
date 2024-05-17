@@ -2,14 +2,10 @@
 
 #include "context.h"
 #include "darray.h"
-#include "defines.h"
 
-#include "device.h"
-#include "types.h"
-#include "vulkan/vulkan_core.h"
-#include <stdio.h>
 #include <vulkan/vulkan.h>
 
+#include <stdio.h>
 #include <stdlib.h>
 
 static VkShaderModule create_shader_module(VkDevice device, const u32 *code, u64 code_size);

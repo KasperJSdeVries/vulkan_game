@@ -1,10 +1,7 @@
 #include "swapchain.h"
 
 #include "command_buffer.h"
-#include "defines.h"
 #include "device.h"
-
-#include "vulkan/vulkan_core.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -65,8 +62,8 @@ static void create(context *context, u32 width, u32 height, swapchain *swapchain
 
     VkExtent2D min = context->device.swapchain_support.capabilities.minImageExtent;
     VkExtent2D max = context->device.swapchain_support.capabilities.maxImageExtent;
-    swapchain_extent.width = CLAMP(swapchain_extent.width, min.width, max.width);
-    swapchain_extent.height = CLAMP(swapchain_extent.height, min.height, max.height);
+    swapchain_extent.width = VM_CLAMP(swapchain_extent.width, min.width, max.width);
+    swapchain_extent.height = VM_CLAMP(swapchain_extent.height, min.height, max.height);
 
     u32 image_count = context->device.swapchain_support.capabilities.minImageCount + 1;
     if (context->device.swapchain_support.capabilities.maxImageCount > 0 &&

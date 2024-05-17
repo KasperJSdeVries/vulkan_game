@@ -1,7 +1,7 @@
 #ifndef JSON_H
 #define JSON_H
 
-#include "defines.h"
+#include <vm/vm.h>
 
 typedef enum {
     JSON_VALUE_NONE,

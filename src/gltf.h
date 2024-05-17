@@ -1,8 +1,9 @@
 #ifndef GLFT_H
 #define GLFT_H
 
-#include "defines.h"
+#include <vm/vm.h>
 
+#include <stdio.h>
 #include <string.h>
 
 typedef struct {
@@ -16,10 +17,10 @@ typedef struct {
 } gltf_scene;
 
 typedef struct {
-    mat4s matrix;
-    vec4s rotation;
-    vec3s scale;
-    vec3s translation;
+    mat4 matrix;
+    vec4 rotation;
+    vec3 scale;
+    vec3 translation;
     u64 mesh;
 } gltf_node;
 
@@ -96,12 +97,12 @@ static gltf_accessor_type _accessor_type_from_string(char *string, u32 string_le
 typedef struct {
     union {
         f32 scalar;
-        vec2s vec2;
-        vec3s vec3;
-        vec4s vec4;
-        mat2s mat2;
-        mat3s mat3;
-        mat4s mat4;
+        vec2 vec2;
+        vec3 vec3;
+        vec4 vec4;
+        mat2 mat2;
+        mat3 mat3;
+        mat4 mat4;
         f32 raw[16];
     } max, min;
     u64 byte_offset;

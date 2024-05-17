@@ -8,9 +8,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -Wall -Wextra")
 
+add_subdirectory(lib)
+
 find_package(glfw3 3.3 REQUIRED)
 find_package(Vulkan REQUIRED)
-find_package(cglm REQUIRED)
 
 find_program(GLSL_VALIDATOR glslangValidator)
 if(NOT GLSL_VALIDATOR)
@@ -44,7 +45,7 @@ set(SOURCES
     src/swapchain.c)
 
 add_executable(${PROJECT_NAME} ${SOURCES})
-target_link_libraries(${PROJECT_NAME} glfw ${Vulkan_LIBRARY} cglm m)
+target_link_libraries(${PROJECT_NAME} glfw ${Vulkan_LIBRARY} vm m)
 target_include_directories(${PROJECT_NAME} PRIVATE ${Vulkan_INCLUDE_DIR}
                                                    ${STB_INCLUDE_PATH})
 

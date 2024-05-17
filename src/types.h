@@ -1,8 +1,7 @@
 #ifndef TYPES_H
 #define TYPES_H
 
-#include "defines.h"
-#include "vulkan/vulkan_core.h"
+#include <vm/vm.h>
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>

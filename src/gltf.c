@@ -1,8 +1,5 @@
 #include "gltf.h"
 
-#include "cglm/struct/vec3.h"
-#include "cglm/types-struct.h"
-#include "defines.h"
 #include "json.h"
 
 #include <stdio.h>
@@ -146,7 +143,7 @@ static void parse_node(json_value *node, gltf_node *out_data) {
         json_get_value(node, matrix, JSON_VALUE_ARRAY);
         // TODO: Finish implementing reading out the matrix data
     } else {
-        out_data->matrix = glms_mat4_identity();
+        out_data->matrix = vm_mat4_identity();
     }
 
     json_value *rotation = json_object_get_value(node, "rotation");
@@ -154,7 +151,7 @@ static void parse_node(json_value *node, gltf_node *out_data) {
         json_get_value(node, rotation, JSON_VALUE_ARRAY);
         // TODO: Finish implementing reading out the rotation data
     } else {
-        out_data->rotation = (vec4s){{0.0f, 0.0f, 0.0f, 1.0f}};
+        out_data->rotation = (vec4){{0.0f, 0.0f, 0.0f, 1.0f}};
     }
 
     json_value *scale = json_object_get_value(node, "scale");
@@ -162,7 +159,7 @@ static void parse_node(json_value *node, gltf_node *out_data) {
         json_get_value(node, scale, JSON_VALUE_ARRAY);
         // TODO: Finish implementing reading out the scale data
     } else {
-        out_data->scale = glms_vec3_one();
+        out_data->scale = vm_vec3_one();
     }
 
     json_value *translation = json_object_get_value(node, "translation");
@@ -170,7 +167,7 @@ static void parse_node(json_value *node, gltf_node *out_data) {
         json_get_value(node, translation, JSON_VALUE_ARRAY);
         // TODO: Finish implementing reading out the translation data
     } else {
-        out_data->translation = glms_vec3_zero();
+        out_data->translation = vm_vec3_zero();
     }
 
     json_value *mesh;

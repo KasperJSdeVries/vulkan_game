@@ -1,8 +1,7 @@
 #include "json.h"
-#include "darray.h"
-#include "defines.h"
 
-#include <math.h>
+#include "darray.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

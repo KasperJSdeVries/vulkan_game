@@ -1,9 +1,9 @@
-#include "command_buffer.h"
 #include "context.h"
-#include "defines.h"
 #include "gltf.h"
 #include "pipeline.h"
 #include "types.h"
+
+#include <vm/vm.h>
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -18,14 +18,14 @@
 #define HEIGHT 720
 
 typedef struct {
-    mat4s model;
-    mat4s view;
-    mat4s projection;
+    mat4 model;
+    mat4 view;
+    mat4 projection;
 } UniformBufferObject;
 
 typedef struct {
     u32 vertex_count;
-    vec3s *vertices;
+    vec3 *vertices;
     u32 *indices;
     u64 triangles_length;
 } Mesh;
@@ -33,15 +33,15 @@ typedef struct {
 typedef struct {
     Mesh mesh;
     i32 resolution;
-    vec3s local_up;
-    vec3s axis_a;
-    vec3s axis_b;
+    vec3 local_up;
+    vec3 axis_a;
+    vec3 axis_b;
 } TerrainFace;
 
 typedef struct {
-    vec3s position;
-    vec3s front;
-    vec3s up;
+    vec3 position;
+    vec3 front;
+    vec3 up;
 } Camera;
 
 #define FACES_PER_PLANET 6
@@ -52,12 +52,12 @@ typedef struct {
 
 static void process_input(GLFWwindow *window, Camera *camera, f32 delta_time);
 
-static TerrainFace create_terrain_face(int resolution, vec3s local_up) {
+static TerrainFace create_terrain_face(int resolution, vec3 local_up) {
     TerrainFace terrain_face;
     terrain_face.resolution = resolution;
     terrain_face.local_up = local_up;
-    terrain_face.axis_a = (vec3s){{local_up.y, local_up.z, local_up.x}};
-    terrain_face.axis_b = glms_vec3_cross(local_up, terrain_face.axis_a);
+    terrain_face.axis_a = (vec3){{local_up.y, local_up.z, local_up.x}};
+    terrain_face.axis_b = vm_vec3_cross(local_up, terrain_face.axis_a);
 
     return terrain_face;
 }
@@ -72,7 +72,7 @@ static void terrain_face_construct_mesh(TerrainFace *terrain_face) {
 
     terrain_face->mesh.vertex_count = terrain_face->resolution * terrain_face->resolution;
 
-    terrain_face->mesh.vertices = malloc(terrain_face->mesh.vertex_count * sizeof(vec3s));
+    terrain_face->mesh.vertices = malloc(terrain_face->mesh.vertex_count * sizeof(vec3));
 
     terrain_face->mesh.triangles_length =
         (terrain_face->resolution - 1) * (terrain_face->resolution - 1) * 6;
@@ -83,15 +83,15 @@ static void terrain_face_construct_mesh(TerrainFace *terrain_face) {
     for (int y = 0; y < terrain_face->resolution; y++) {
         for (int x = 0; x < terrain_face->resolution; x++) {
             u32 i = x + y * terrain_face->resolution;
-            vec2s percent = glms_vec2_divs((vec2s){{x, y}}, (terrain_face->resolution - 1));
+            vec2 percent = vm_vec2_divs((vec2){{x, y}}, (terrain_face->resolution - 1));
             // local_up
             // + (percent.x - 0.5f) * 2.0f * axis_a
             // + (percent.y - 0.5f) * 2.0f * axis_b
-            vec3s point_on_unit_cube = glms_vec3_add(
+            vec3 point_on_unit_cube = vm_vec3_add(
                 terrain_face->local_up,
-                glms_vec3_add(glms_vec3_scale(terrain_face->axis_a, (percent.x - 0.5f) * 2.0f),
-                              glms_vec3_scale(terrain_face->axis_b, (percent.y - 0.5f) * 2.0f)));
-            vec3s point_on_unit_sphere = glms_vec3_normalize(point_on_unit_cube);
+                vm_vec3_add(vm_vec3_scale(terrain_face->axis_a, (percent.x - 0.5f) * 2.0f),
+                            vm_vec3_scale(terrain_face->axis_b, (percent.y - 0.5f) * 2.0f)));
+            vec3 point_on_unit_sphere = vm_vec3_normalize(point_on_unit_cube);
             terrain_face->mesh.vertices[i] = point_on_unit_sphere;
 
             if (x != terrain_face->resolution - 1 && y != terrain_face->resolution - 1) {
@@ -111,7 +111,7 @@ static void terrain_face_construct_mesh(TerrainFace *terrain_face) {
 static Planet create_planet() {
     Planet planet = {};
     int resolution = 4;
-    vec3s directions[] = {
+    vec3 directions[] = {
         {{0, 0, 1}},
         {{0, 0, -1}},
         {{0, 1, 0}},
@@ -150,7 +150,7 @@ static void mouse_callback(GLFWwindow *window, double x_position, double y_posit
     yaw += x_offset;
     pitch += y_offset;
 
-    pitch = CLAMP(pitch, -89.0f, 89.0f);
+    pitch = VM_CLAMP(pitch, -89.0f, 89.0f);
 }
 
 static GLFWwindow *create_window() {
@@ -180,7 +180,7 @@ int main() {
     pipeline_builder_set_ubo_size(&planet_pipeline_builder, sizeof(UniformBufferObject));
     pipeline_builder_add_input_binding(&planet_pipeline_builder,
                                        0,
-                                       sizeof(vec3s),
+                                       sizeof(vec3),
                                        VK_VERTEX_INPUT_RATE_VERTEX);
     pipeline_builder_add_input_attribute(&planet_pipeline_builder,
                                          0,
@@ -196,7 +196,7 @@ int main() {
     Planet planet = create_planet();
     planet_generate_meshes(&planet);
 
-    VkDeviceSize vertex_buffer_size = sizeof(vec3s) * (planet.terrain_faces[0].mesh.vertex_count);
+    VkDeviceSize vertex_buffer_size = sizeof(vec3) * (planet.terrain_faces[0].mesh.vertex_count);
 
     VkBuffer vertex_staging_buffer;
     VkDeviceMemory vertex_staging_buffer_memory;
@@ -322,24 +322,24 @@ int main() {
 
         context_end_frame(&render_context);
 
-        vec3s direction = {{
-            cos(glm_rad(yaw)) * cos(glm_rad(pitch)),
-            sin(glm_rad(pitch)),
-            sin(glm_rad(yaw)) * cos(glm_rad(pitch)),
+        vec3 direction = {{
+            cos(VM_RAD(yaw)) * cos(VM_RAD(pitch)),
+            sin(VM_RAD(pitch)),
+            sin(VM_RAD(yaw)) * cos(VM_RAD(pitch)),
         }};
-        camera.front = glms_vec3_normalize(direction);
+        camera.front = vm_vec3_normalize(direction);
 
         UniformBufferObject ubo = {
-            .model = glms_mat4_identity(),
+            .model = vm_mat4_identity(),
             // https://learnopengl.com/Getting-started/Camera
-            .view = glms_lookat(camera.position,
-                                glms_vec3_add(camera.position, camera.front),
-                                camera.up),
-            .projection = glms_perspective(glm_rad(45.0f),
-                                           (float)render_context.framebuffer_width /
-                                               (float)render_context.framebuffer_height,
-                                           0.1f,
-                                           1000.0f),
+            .view = vm_lookat_lh(camera.position,
+                                 vm_vec3_add(camera.position, camera.front),
+                                 camera.up),
+            .projection = vm_perspective_lh_zo(VM_RAD(45.0f),
+                                               (float)render_context.framebuffer_width /
+                                                   (float)render_context.framebuffer_height,
+                                               0.1f,
+                                               1000.0f),
         };
 
         ubo.projection.m11 *= -1;
@@ -374,22 +374,22 @@ static void process_input(GLFWwindow *window, Camera *camera, f32 delta_time) {
     const float camera_speed = delta_time * 2.5f;
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
         camera->position =
-            glms_vec3_add(camera->position, glms_vec3_scale(camera->front, camera_speed));
+            vm_vec3_add(camera->position, vm_vec3_scale(camera->front, camera_speed));
     }
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
         camera->position =
-            glms_vec3_sub(camera->position, glms_vec3_scale(camera->front, camera_speed));
+            vm_vec3_sub(camera->position, vm_vec3_scale(camera->front, camera_speed));
     }
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-        camera->position = glms_vec3_sub(
-            camera->position,
-            glms_vec3_scale(glms_vec3_normalize(glms_vec3_cross(camera->front, camera->up)),
-                            camera_speed));
+        camera->position =
+            vm_vec3_sub(camera->position,
+                        vm_vec3_scale(vm_vec3_normalize(vm_vec3_cross(camera->front, camera->up)),
+                                      camera_speed));
     }
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-        camera->position = glms_vec3_add(
-            camera->position,
-            glms_vec3_scale(glms_vec3_normalize(glms_vec3_cross(camera->front, camera->up)),
-                            camera_speed));
+        camera->position =
+            vm_vec3_add(camera->position,
+                        vm_vec3_scale(vm_vec3_normalize(vm_vec3_cross(camera->front, camera->up)),
+                                      camera_speed));
     }
 }

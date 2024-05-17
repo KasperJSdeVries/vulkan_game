@@ -1,7 +1,6 @@
 #ifndef PIPELINE_H
 #define PIPELINE_H
 
-#include "defines.h"
 #include "types.h"
 
 #include <vulkan/vulkan.h>
