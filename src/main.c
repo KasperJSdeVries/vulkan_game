@@ -181,8 +181,6 @@ typedef struct {
 
     VkBuffer vertex_buffer;
     VkDeviceMemory vertex_buffer_memory;
-    VkBuffer index_buffer;
-    VkDeviceMemory index_buffer_memory;
     VkBuffer instance_buffer;
     VkDeviceMemory instance_buffer_memory;
 } ColoredRectangleRenderer;
@@ -202,6 +200,7 @@ static ColoredRectangleRenderer colored_rectangle_renderer_create(context *rende
                                        sizeof(vec3s),
                                        VK_VERTEX_INPUT_RATE_INSTANCE);
     pipeline_builder_add_input_attribute(&ui_pipeline_builder, 1, 1, VK_FORMAT_R32G32B32_SFLOAT, 0);
+    pipeline_builder_set_topology(&ui_pipeline_builder, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
 
     return (ColoredRectangleRenderer){
         .rectangles = darray_create(ColoredRectangle),
@@ -220,9 +219,6 @@ static void colored_rectangle_renderer_destroy(ColoredRectangleRenderer *rendere
     vkDestroyBuffer(render_device->logical_device, renderer->instance_buffer, NULL);
     vkFreeMemory(render_device->logical_device, renderer->instance_buffer_memory, NULL);
 
-    vkDestroyBuffer(render_device->logical_device, renderer->index_buffer, NULL);
-    vkFreeMemory(render_device->logical_device, renderer->index_buffer_memory, NULL);
-
     pipeline_destroy(&renderer->rectangle_pipeline, render_device);
 }
 
@@ -238,7 +234,6 @@ static void colored_rectangle_renderer_setup_buffers(ColoredRectangleRenderer *r
                                                      context *render_context) {
     VkDeviceSize vertex_buffer_size = sizeof(vec2s) * 4 * darray_length(renderer->rectangles);
     VkDeviceSize instance_buffer_size = sizeof(vec3s) * darray_length(renderer->rectangles);
-    VkDeviceSize index_buffer_size = sizeof(u16) * 6;
 
     VkBuffer vertex_staging_buffer;
     VkDeviceMemory vertex_staging_buffer_memory;
@@ -269,8 +264,8 @@ static void colored_rectangle_renderer_setup_buffers(ColoredRectangleRenderer *r
     for (u32 i = 0; i < darray_length(renderer->rectangles); i++) {
         vec2s buf[] = {
             {{renderer->rectangles[i].aa.x, renderer->rectangles[i].aa.y}},
-            {{renderer->rectangles[i].bb.x, renderer->rectangles[i].aa.y}},
             {{renderer->rectangles[i].aa.x, renderer->rectangles[i].bb.y}},
+            {{renderer->rectangles[i].bb.x, renderer->rectangles[i].aa.y}},
             {{renderer->rectangles[i].bb.x, renderer->rectangles[i].bb.y}},
         };
 
@@ -324,43 +319,6 @@ static void colored_rectangle_renderer_setup_buffers(ColoredRectangleRenderer *r
 
     vkDestroyBuffer(render_context->device.logical_device, instance_staging_buffer, NULL);
     vkFreeMemory(render_context->device.logical_device, instance_staging_buffer_memory, NULL);
-
-    VkBuffer index_staging_buffer;
-    VkDeviceMemory index_staging_buffer_memory;
-
-    context_create_buffer(render_context,
-                          index_buffer_size,
-                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                          &index_staging_buffer,
-                          &index_staging_buffer_memory);
-
-    context_create_buffer(render_context,
-                          index_buffer_size,
-                          VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                          &renderer->index_buffer,
-                          &renderer->index_buffer_memory);
-
-    void *index_staging_buffer_memory_mapped;
-    vkMapMemory(render_context->device.logical_device,
-                index_staging_buffer_memory,
-                0,
-                index_buffer_size,
-                0,
-                &index_staging_buffer_memory_mapped);
-
-    u16 indices[] = {0, 2, 1, 1, 2, 3};
-
-    memcpy(index_staging_buffer_memory_mapped, indices, sizeof(indices));
-    context_copy_buffer(render_context,
-                        index_staging_buffer,
-                        renderer->index_buffer,
-                        index_buffer_size);
-
-    vkDestroyBuffer(render_context->device.logical_device, index_staging_buffer, NULL);
-    vkFreeMemory(render_context->device.logical_device, index_staging_buffer_memory, NULL);
 }
 
 static void colored_rectangle_renderer_render(ColoredRectangleRenderer *renderer,
@@ -371,9 +329,8 @@ static void colored_rectangle_renderer_render(ColoredRectangleRenderer *renderer
     VkDeviceSize offsets[] = {0};
     vkCmdBindVertexBuffers(command_buffer, 0, 1, &renderer->vertex_buffer, offsets);
     vkCmdBindVertexBuffers(command_buffer, 1, 1, &renderer->instance_buffer, offsets);
-    vkCmdBindIndexBuffer(command_buffer, renderer->index_buffer, 0, VK_INDEX_TYPE_UINT16);
 
-    vkCmdDrawIndexed(command_buffer, 6, darray_length(renderer->rectangles), 0, 0, 0);
+    vkCmdDraw(command_buffer, 4, darray_length(renderer->rectangles), 0, 0);
 }
 
 int main() {

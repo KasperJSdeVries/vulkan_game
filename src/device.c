@@ -299,7 +299,7 @@ static b8 pick_physical_device(context *context) {
                 printf("GPU type is Integrated.\n");
                 break;
             case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
-                printf("GPU type is Descrete.\n");
+                printf("GPU type is Discrete.\n");
                 break;
             case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
                 printf("GPU type is Virtual.\n");
