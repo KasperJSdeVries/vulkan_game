@@ -17,7 +17,7 @@ if(NOT GLSL_VALIDATOR)
   message(FATAL "Could not find glslangValidator compiler")
 endif()
 
-file(GLOB_RECURSE GLSL_SOURCE_FILES "shaders/*.frag" "shaders/*.vert")
+file(GLOB_RECURSE GLSL_SOURCE_FILES "res/shaders/*.vert" "res/shaders/*.frag")
 
 foreach(GLSL ${GLSL_SOURCE_FILES})
   get_filename_component(FILE_NAME ${GLSL} NAME)
@@ -54,9 +54,26 @@ add_custom_command(
   TARGET ${PROJECT_NAME}
   POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
-          "$<TARGET_FILE_DIR:${PROJECT_NAME}>/res/"
-  COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_BINARY_DIR}"
-          "$<TARGET_FILE_DIR:${PROJECT_NAME}>")
+          "$<TARGET_FILE_DIR:${PROJECT_NAME}>/shaders"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_BINARY_DIR}/shaders"
+          "$<TARGET_FILE_DIR:${PROJECT_NAME}>/shaders")
+
+add_custom_command(
+  TARGET ${PROJECT_NAME}
+  POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+          "$<TARGET_FILE_DIR:${PROJECT_NAME}>/models"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/res/models"
+          "$<TARGET_FILE_DIR:${PROJECT_NAME}>/models")
+
+add_custom_command(
+  TARGET ${PROJECT_NAME}
+  POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+          "$<TARGET_FILE_DIR:${PROJECT_NAME}>/textures"
+  COMMAND
+    ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/res/textures"
+    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/textures")
 
 install(TARGETS ${PROJECT_NAME})
 install(DIRECTORY "$<TARGET_FILE_DIR:${PROJECT_NAME}>/shaders" TYPE DATA)
