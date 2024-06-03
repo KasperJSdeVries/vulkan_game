@@ -126,28 +126,30 @@ void pipeline_builder_add_push_constant(pipeline_builder *builder,
 }
 
 pipeline pipeline_builder_build(pipeline_builder *builder, VkRenderPass render_pass) {
-    pipeline pipeline;
+    pipeline pipeline = {0};
 
-    VkDescriptorSetLayoutBinding layout_bindings[] = {
-        {
-            .binding = 0,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .pImmutableSamplers = NULL,
-            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-        },
-    };
+    if (builder->ubo_size) {
+        VkDescriptorSetLayoutBinding layout_bindings[] = {
+            {
+                .binding = 0,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .pImmutableSamplers = NULL,
+                .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+            },
+        };
 
-    VkDescriptorSetLayoutCreateInfo layout_info = {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = sizeof(VkDescriptorSetLayoutBinding) / sizeof(layout_bindings),
-        .pBindings = layout_bindings,
-    };
+        VkDescriptorSetLayoutCreateInfo layout_info = {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = sizeof(VkDescriptorSetLayoutBinding) / sizeof(layout_bindings),
+            .pBindings = layout_bindings,
+        };
 
-    VK_CHECK(vkCreateDescriptorSetLayout(builder->context->device.logical_device,
-                                         &layout_info,
-                                         NULL,
-                                         &pipeline.global_descriptor_set_layout));
+        VK_CHECK(vkCreateDescriptorSetLayout(builder->context->device.logical_device,
+                                             &layout_info,
+                                             NULL,
+                                             &pipeline.global_descriptor_set_layout));
+    }
 
     VkPipelineVertexInputStateCreateInfo vertex_input_state = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
@@ -223,11 +225,14 @@ pipeline pipeline_builder_build(pipeline_builder *builder, VkRenderPass render_p
 
     VkPipelineLayoutCreateInfo pipeline_layout_create_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 1,
-        .pSetLayouts = &pipeline.global_descriptor_set_layout,
         .pushConstantRangeCount = darray_length(builder->push_constant_ranges),
         .pPushConstantRanges = builder->push_constant_ranges,
     };
+
+    if (builder->ubo_size) {
+        pipeline_layout_create_info.setLayoutCount = 1;
+        pipeline_layout_create_info.pSetLayouts = &pipeline.global_descriptor_set_layout;
+    }
 
     VK_CHECK(vkCreatePipelineLayout(builder->context->device.logical_device,
                                     &pipeline_layout_create_info,
@@ -260,79 +265,81 @@ pipeline pipeline_builder_build(pipeline_builder *builder, VkRenderPass render_p
                                        NULL,
                                        &pipeline.handle));
 
-    context_create_buffer(builder->context,
-                          builder->ubo_size,
-                          VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                          &pipeline.uniform_buffer,
-                          &pipeline.uniform_buffer_memory);
-    vkMapMemory(builder->context->device.logical_device,
-                pipeline.uniform_buffer_memory,
-                0,
-                builder->ubo_size,
-                0,
-                &pipeline.uniform_buffer_mapped);
+    if (builder->ubo_size != 0) {
+        context_create_buffer(builder->context,
+                              builder->ubo_size,
+                              VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              &pipeline.uniform_buffer,
+                              &pipeline.uniform_buffer_memory);
+        vkMapMemory(builder->context->device.logical_device,
+                    pipeline.uniform_buffer_memory,
+                    0,
+                    builder->ubo_size,
+                    0,
+                    &pipeline.uniform_buffer_mapped);
 
-    VkDescriptorPoolSize pool_sizes[] = {
-        {
-            .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount = MAX_FRAMES_IN_FLIGHT,
-        },
-    };
-
-    VkDescriptorPoolCreateInfo pool_info = {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .poolSizeCount = sizeof(pool_sizes) / sizeof(VkDescriptorPoolSize),
-        .pPoolSizes = pool_sizes,
-        .maxSets = MAX_FRAMES_IN_FLIGHT,
-    };
-
-    VK_CHECK(vkCreateDescriptorPool(builder->context->device.logical_device,
-                                    &pool_info,
-                                    NULL,
-                                    &pipeline.descriptor_pool));
-
-    VkDescriptorSetLayout layouts[MAX_FRAMES_IN_FLIGHT];
-    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        layouts[i] = pipeline.global_descriptor_set_layout;
-    }
-
-    VkDescriptorSetAllocateInfo alloc_info = {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-        .descriptorPool = pipeline.descriptor_pool,
-        .descriptorSetCount = MAX_FRAMES_IN_FLIGHT,
-        .pSetLayouts = layouts,
-    };
-
-    VK_CHECK(vkAllocateDescriptorSets(builder->context->device.logical_device,
-                                      &alloc_info,
-                                      pipeline.global_descriptor_sets));
-
-    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        VkDescriptorBufferInfo buffer_info = {
-            .buffer = pipeline.uniform_buffer,
-            .offset = 0,
-            .range = builder->ubo_size,
-        };
-
-        VkWriteDescriptorSet descriptor_writes[] = {
+        VkDescriptorPoolSize pool_sizes[] = {
             {
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = pipeline.global_descriptor_sets[i],
-                .dstBinding = 0,
-                .dstArrayElement = 0,
-                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                .descriptorCount = 1,
-                .pBufferInfo = &buffer_info,
+                .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorCount = MAX_FRAMES_IN_FLIGHT,
             },
         };
 
-        vkUpdateDescriptorSets(builder->context->device.logical_device,
-                               sizeof(descriptor_writes) / sizeof(VkWriteDescriptorSet),
-                               descriptor_writes,
-                               0,
-                               NULL);
+        VkDescriptorPoolCreateInfo pool_info = {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .poolSizeCount = sizeof(pool_sizes) / sizeof(VkDescriptorPoolSize),
+            .pPoolSizes = pool_sizes,
+            .maxSets = MAX_FRAMES_IN_FLIGHT,
+        };
+
+        VK_CHECK(vkCreateDescriptorPool(builder->context->device.logical_device,
+                                        &pool_info,
+                                        NULL,
+                                        &pipeline.descriptor_pool));
+
+        VkDescriptorSetLayout layouts[MAX_FRAMES_IN_FLIGHT];
+        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            layouts[i] = pipeline.global_descriptor_set_layout;
+        }
+
+        VkDescriptorSetAllocateInfo alloc_info = {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool = pipeline.descriptor_pool,
+            .descriptorSetCount = MAX_FRAMES_IN_FLIGHT,
+            .pSetLayouts = layouts,
+        };
+
+        VK_CHECK(vkAllocateDescriptorSets(builder->context->device.logical_device,
+                                          &alloc_info,
+                                          pipeline.global_descriptor_sets));
+
+        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            VkDescriptorBufferInfo buffer_info = {
+                .buffer = pipeline.uniform_buffer,
+                .offset = 0,
+                .range = builder->ubo_size,
+            };
+
+            VkWriteDescriptorSet descriptor_writes[] = {
+                {
+                    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet = pipeline.global_descriptor_sets[i],
+                    .dstBinding = 0,
+                    .dstArrayElement = 0,
+                    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                    .descriptorCount = 1,
+                    .pBufferInfo = &buffer_info,
+                },
+            };
+
+            vkUpdateDescriptorSets(builder->context->device.logical_device,
+                                   sizeof(descriptor_writes) / sizeof(VkWriteDescriptorSet),
+                                   descriptor_writes,
+                                   0,
+                                   NULL);
+        }
     }
 
     vkDestroyShaderModule(builder->context->device.logical_device,
@@ -349,25 +356,30 @@ pipeline pipeline_builder_build(pipeline_builder *builder, VkRenderPass render_p
 }
 
 void pipeline_bind(const pipeline *pipeline, VkCommandBuffer command_buffer, u32 frame_index) {
+    if (pipeline->uniform_buffer != VK_NULL_HANDLE) {
+        vkCmdBindDescriptorSets(command_buffer,
+                                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipeline->layout,
+                                0,
+                                1,
+                                &pipeline->global_descriptor_sets[frame_index],
+                                0,
+                                NULL);
+    } else {
+    }
     vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->handle);
-    vkCmdBindDescriptorSets(command_buffer,
-                            VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            pipeline->layout,
-                            0,
-                            1,
-                            &pipeline->global_descriptor_sets[frame_index],
-                            0,
-                            NULL);
 }
 
 void pipeline_destroy(pipeline *pipeline, device *device) {
-    vkDestroyBuffer(device->logical_device, pipeline->uniform_buffer, NULL);
-    vkFreeMemory(device->logical_device, pipeline->uniform_buffer_memory, NULL);
+    if (pipeline->uniform_buffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device->logical_device, pipeline->uniform_buffer, NULL);
+        vkFreeMemory(device->logical_device, pipeline->uniform_buffer_memory, NULL);
 
-    vkDestroyDescriptorPool(device->logical_device, pipeline->descriptor_pool, NULL);
-    vkDestroyDescriptorSetLayout(device->logical_device,
-                                 pipeline->global_descriptor_set_layout,
-                                 NULL);
+        vkDestroyDescriptorPool(device->logical_device, pipeline->descriptor_pool, NULL);
+        vkDestroyDescriptorSetLayout(device->logical_device,
+                                     pipeline->global_descriptor_set_layout,
+                                     NULL);
+    }
 
     vkDestroyPipeline(device->logical_device, pipeline->handle, NULL);
     vkDestroyPipelineLayout(device->logical_device, pipeline->layout, NULL);

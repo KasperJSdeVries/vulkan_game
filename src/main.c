@@ -1,4 +1,5 @@
 #include "context.h"
+#include "darray.h"
 #include "defines.h"
 #include "gltf.h"
 #include "pipeline.h"
@@ -15,6 +16,12 @@
 
 #define WIDTH 1280
 #define HEIGHT 720
+
+typedef struct {
+    vec2s aa;
+    vec2s bb;
+    vec3s color;
+} ColoredRectangle;
 
 typedef struct {
     mat4s model;
@@ -168,12 +175,221 @@ static GLFWwindow *create_window() {
     return window;
 }
 
+typedef struct {
+    pipeline rectangle_pipeline;
+    ColoredRectangle *rectangles; // darray
+
+    VkBuffer vertex_buffer;
+    VkDeviceMemory vertex_buffer_memory;
+    VkBuffer index_buffer;
+    VkDeviceMemory index_buffer_memory;
+    VkBuffer instance_buffer;
+    VkDeviceMemory instance_buffer_memory;
+} ColoredRectangleRenderer;
+
+static ColoredRectangleRenderer colored_rectangle_renderer_create(context *render_context) {
+    pipeline_builder ui_pipeline_builder = pipeline_builder_new(render_context);
+    pipeline_builder_set_shaders(&ui_pipeline_builder,
+                                 "shaders/ui.vert.spv",
+                                 "shaders/ui.frag.spv");
+    pipeline_builder_add_input_binding(&ui_pipeline_builder,
+                                       0,
+                                       sizeof(vec2s),
+                                       VK_VERTEX_INPUT_RATE_VERTEX);
+    pipeline_builder_add_input_attribute(&ui_pipeline_builder, 0, 0, VK_FORMAT_R32G32_SFLOAT, 0);
+    pipeline_builder_add_input_binding(&ui_pipeline_builder,
+                                       1,
+                                       sizeof(vec3s),
+                                       VK_VERTEX_INPUT_RATE_INSTANCE);
+    pipeline_builder_add_input_attribute(&ui_pipeline_builder, 1, 1, VK_FORMAT_R32G32B32_SFLOAT, 0);
+
+    return (ColoredRectangleRenderer){
+        .rectangles = darray_create(ColoredRectangle),
+        .rectangle_pipeline =
+            pipeline_builder_build(&ui_pipeline_builder, render_context->render_pass),
+    };
+}
+
+static void colored_rectangle_renderer_destroy(ColoredRectangleRenderer *renderer,
+                                               device *render_device) {
+    darray_destroy(renderer->rectangles);
+
+    vkDestroyBuffer(render_device->logical_device, renderer->vertex_buffer, NULL);
+    vkFreeMemory(render_device->logical_device, renderer->vertex_buffer_memory, NULL);
+
+    vkDestroyBuffer(render_device->logical_device, renderer->instance_buffer, NULL);
+    vkFreeMemory(render_device->logical_device, renderer->instance_buffer_memory, NULL);
+
+    vkDestroyBuffer(render_device->logical_device, renderer->index_buffer, NULL);
+    vkFreeMemory(render_device->logical_device, renderer->index_buffer_memory, NULL);
+
+    pipeline_destroy(&renderer->rectangle_pipeline, render_device);
+}
+
+static void colored_rectangle_renderer_add_rectangle(ColoredRectangleRenderer *renderer,
+                                                     vec2s aa,
+                                                     vec2s bb,
+                                                     vec3s color) {
+    ColoredRectangle rect = {aa, bb, color};
+    darray_push(renderer->rectangles, rect);
+}
+
+static void colored_rectangle_renderer_setup_buffers(ColoredRectangleRenderer *renderer,
+                                                     context *render_context) {
+    VkDeviceSize vertex_buffer_size = sizeof(vec2s) * 4 * darray_length(renderer->rectangles);
+    VkDeviceSize instance_buffer_size = sizeof(vec3s) * darray_length(renderer->rectangles);
+    VkDeviceSize index_buffer_size = sizeof(u16) * 6;
+
+    VkBuffer vertex_staging_buffer;
+    VkDeviceMemory vertex_staging_buffer_memory;
+
+    context_create_buffer(render_context,
+                          vertex_buffer_size,
+                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                          &vertex_staging_buffer,
+                          &vertex_staging_buffer_memory);
+
+    context_create_buffer(render_context,
+                          vertex_buffer_size,
+                          VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                          &renderer->vertex_buffer,
+                          &renderer->vertex_buffer_memory);
+
+    void *vertex_staging_buffer_memory_mapped;
+    vkMapMemory(render_context->device.logical_device,
+                vertex_staging_buffer_memory,
+                0,
+                vertex_buffer_size,
+                0,
+                &vertex_staging_buffer_memory_mapped);
+
+    for (u32 i = 0; i < darray_length(renderer->rectangles); i++) {
+        vec2s buf[] = {
+            {{renderer->rectangles[i].aa.x, renderer->rectangles[i].aa.y}},
+            {{renderer->rectangles[i].bb.x, renderer->rectangles[i].aa.y}},
+            {{renderer->rectangles[i].aa.x, renderer->rectangles[i].bb.y}},
+            {{renderer->rectangles[i].bb.x, renderer->rectangles[i].bb.y}},
+        };
+
+        memcpy(vertex_staging_buffer_memory_mapped + i * sizeof(vec2s), buf, sizeof(buf));
+    }
+
+    context_copy_buffer(render_context,
+                        vertex_staging_buffer,
+                        renderer->vertex_buffer,
+                        vertex_buffer_size);
+
+    vkDestroyBuffer(render_context->device.logical_device, vertex_staging_buffer, NULL);
+    vkFreeMemory(render_context->device.logical_device, vertex_staging_buffer_memory, NULL);
+
+    VkBuffer instance_staging_buffer;
+    VkDeviceMemory instance_staging_buffer_memory;
+
+    context_create_buffer(render_context,
+                          instance_buffer_size,
+                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                          &instance_staging_buffer,
+                          &instance_staging_buffer_memory);
+
+    context_create_buffer(render_context,
+                          instance_buffer_size,
+                          VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                          &renderer->instance_buffer,
+                          &renderer->instance_buffer_memory);
+
+    void *instance_staging_buffer_memory_mapped;
+    vkMapMemory(render_context->device.logical_device,
+                instance_staging_buffer_memory,
+                0,
+                instance_buffer_size,
+                0,
+                &instance_staging_buffer_memory_mapped);
+
+    vec3s colors[darray_length(renderer->rectangles)];
+    for (u32 i = 0; i < darray_length(renderer->rectangles); i++) {
+        colors[i] = renderer->rectangles[i].color;
+    }
+
+    memcpy(instance_staging_buffer_memory_mapped, colors, sizeof(colors));
+    context_copy_buffer(render_context,
+                        instance_staging_buffer,
+                        renderer->instance_buffer,
+                        instance_buffer_size);
+
+    vkDestroyBuffer(render_context->device.logical_device, instance_staging_buffer, NULL);
+    vkFreeMemory(render_context->device.logical_device, instance_staging_buffer_memory, NULL);
+
+    VkBuffer index_staging_buffer;
+    VkDeviceMemory index_staging_buffer_memory;
+
+    context_create_buffer(render_context,
+                          index_buffer_size,
+                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                          &index_staging_buffer,
+                          &index_staging_buffer_memory);
+
+    context_create_buffer(render_context,
+                          index_buffer_size,
+                          VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                          &renderer->index_buffer,
+                          &renderer->index_buffer_memory);
+
+    void *index_staging_buffer_memory_mapped;
+    vkMapMemory(render_context->device.logical_device,
+                index_staging_buffer_memory,
+                0,
+                index_buffer_size,
+                0,
+                &index_staging_buffer_memory_mapped);
+
+    u16 indices[] = {0, 2, 1, 1, 2, 3};
+
+    memcpy(index_staging_buffer_memory_mapped, indices, sizeof(indices));
+    context_copy_buffer(render_context,
+                        index_staging_buffer,
+                        renderer->index_buffer,
+                        index_buffer_size);
+
+    vkDestroyBuffer(render_context->device.logical_device, index_staging_buffer, NULL);
+    vkFreeMemory(render_context->device.logical_device, index_staging_buffer_memory, NULL);
+}
+
+static void colored_rectangle_renderer_render(ColoredRectangleRenderer *renderer,
+                                              u32 current_frame,
+                                              VkCommandBuffer command_buffer) {
+    pipeline_bind(&renderer->rectangle_pipeline, command_buffer, current_frame);
+
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(command_buffer, 0, 1, &renderer->vertex_buffer, offsets);
+    vkCmdBindVertexBuffers(command_buffer, 1, 1, &renderer->instance_buffer, offsets);
+    vkCmdBindIndexBuffer(command_buffer, renderer->index_buffer, 0, VK_INDEX_TYPE_UINT16);
+
+    vkCmdDrawIndexed(command_buffer, 6, darray_length(renderer->rectangles), 0, 0, 0);
+}
+
 int main() {
     GLFWwindow *window = create_window();
     context render_context = context_new(window);
 
     gltf_root gltf;
     load_gltf_from_file("models/tire.glb", &gltf);
+
+    ColoredRectangleRenderer rectangle_renderer =
+        colored_rectangle_renderer_create(&render_context);
+
+    colored_rectangle_renderer_add_rectangle(&rectangle_renderer,
+                                             (vec2s){{0.1, 0.1}},
+                                             (vec2s){{0.2, 0.2}},
+                                             (vec3s){{1.0, 0.0, 0.0}});
 
     pipeline_builder planet_pipeline_builder = pipeline_builder_new(&render_context);
     pipeline_builder_set_ubo_size(&planet_pipeline_builder, sizeof(UniformBufferObject));
@@ -272,6 +488,8 @@ int main() {
 
     context_copy_buffer(&render_context, index_staging_buffer, index_buffers, index_buffer_size);
 
+    colored_rectangle_renderer_setup_buffers(&rectangle_renderer, &render_context);
+
     context_begin_main_loop(&render_context);
 
     Camera camera = {
@@ -319,6 +537,10 @@ int main() {
                              0);
         }
 
+        colored_rectangle_renderer_render(&rectangle_renderer,
+                                          render_context.current_frame,
+                                          command_buffer);
+
         context_end_frame(&render_context);
 
         vec3s direction = {{
@@ -347,6 +569,8 @@ int main() {
     }
 
     context_end_main_loop(&render_context);
+
+    colored_rectangle_renderer_destroy(&rectangle_renderer, &render_context.device);
 
     vkDestroyBuffer(render_context.device.logical_device, vertex_staging_buffer, NULL);
     vkFreeMemory(render_context.device.logical_device, vertex_staging_buffer_memory, NULL);
