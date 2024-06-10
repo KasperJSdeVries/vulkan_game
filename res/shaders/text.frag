@@ -5,7 +5,7 @@ layout(location = 1) in vec3 inColor;
 
 layout(location = 0) out vec4 outColor;
 
-vec4 quadratic_ps(vec2 p, vec4 color) {
+vec4 quadratic_ps(vec2 p, vec4 color, bool is_concave) {
     vec2 px = dFdx(p);
     vec2 py = dFdy(p);
 
@@ -15,6 +15,9 @@ vec4 quadratic_ps(vec2 p, vec4 color) {
     float sd = (p.x * p.x - p.y) / sqrt(fx * fx + fy * fy);
 
     float alpha = 0.5 - sd;
+    if (is_concave) {
+        alpha *= -1;
+    }
     if (alpha > 1) {
         color.a = 1;
     } else if (alpha < 0) {
@@ -26,5 +29,5 @@ vec4 quadratic_ps(vec2 p, vec4 color) {
 }
 
 void main() {
-    outColor = quadratic_ps(inUV, vec4(inColor, 1.0));
+    outColor = quadratic_ps(inUV, vec4(inColor, 1.0), false);
 }

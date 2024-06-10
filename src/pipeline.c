@@ -23,6 +23,7 @@ pipeline_builder pipeline_builder_new(const context *context) {
     pipeline_builder builder = {
         .context = context,
         .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+        .cull_mode = VK_CULL_MODE_BACK_BIT,
         .vertex_input_attributes = darray_create(VkVertexInputAttributeDescription),
         .vertex_input_bindings = darray_create(VkVertexInputBindingDescription),
         .push_constant_ranges = darray_create(VkPushConstantRange),
@@ -113,6 +114,14 @@ void pipeline_builder_set_topology(pipeline_builder *builder, VkPrimitiveTopolog
     builder->topology = topology;
 }
 
+void pipeline_builder_set_cull_mode(pipeline_builder *builder, VkCullModeFlags cull_mode) {
+    builder->cull_mode = cull_mode;
+}
+
+void pipeline_builder_set_alpha_blending(pipeline_builder *builder, b8 value) {
+    builder->enable_alpha_blending = value;
+}
+
 void pipeline_builder_add_push_constant(pipeline_builder *builder,
                                         VkShaderStageFlagBits shader_stage,
                                         u32 size) {
@@ -189,7 +198,7 @@ pipeline pipeline_builder_build(pipeline_builder *builder, VkRenderPass render_p
         .rasterizerDiscardEnable = VK_FALSE,
         .polygonMode = VK_POLYGON_MODE_FILL,
         .lineWidth = 1.0f,
-        .cullMode = VK_CULL_MODE_BACK_BIT,
+        .cullMode = builder->cull_mode,
         .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
         .depthBiasEnable = VK_FALSE,
     };
@@ -204,7 +213,13 @@ pipeline pipeline_builder_build(pipeline_builder *builder, VkRenderPass render_p
     VkPipelineColorBlendAttachmentState color_blend_attachment = {
         .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                           VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
-        .blendEnable = VK_FALSE,
+        .blendEnable = builder->enable_alpha_blending ? VK_TRUE : VK_FALSE,
+        .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .colorBlendOp = VK_BLEND_OP_ADD,
+        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+        .alphaBlendOp = VK_BLEND_OP_ADD,
     };
 
     VkPipelineColorBlendStateCreateInfo color_blend_state = {

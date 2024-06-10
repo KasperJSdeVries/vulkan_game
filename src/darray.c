@@ -91,7 +91,7 @@ void _darray_pop_at(void *array, uint64_t index, void *out_value) {
     memcpy(out_value, (void *)addr, stride);
 
     // copy everything after index to up one
-    memcpy((void *)addr, (void *)addr + stride, (length - (index + 1)) * stride);
+    memcpy((void *)addr, (void *)(addr + stride), (length - (index + 1)) * stride);
 
     _darray_field_set(array, DARRAY_LENGTH, length - 1);
 }

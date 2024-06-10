@@ -1,9 +1,11 @@
 #include "context.h"
 #include "darray.h"
 #include "defines.h"
+#include "font.h"
 #include "gltf.h"
 #include "pipeline.h"
 #include "types.h"
+#include "vulkan/vulkan_core.h"
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -114,8 +116,8 @@ static void terrain_face_construct_mesh(TerrainFace *terrain_face) {
     }
 }
 
-static Planet create_planet() {
-    Planet planet = {};
+static Planet create_planet(void) {
+    Planet planet = {0};
     int resolution = 4;
     vec3s directions[] = {
         {{0, 0, 1}},
@@ -131,13 +133,13 @@ static Planet create_planet() {
     }
 
     return planet;
-};
+}
 
 static void planet_generate_meshes(Planet *planet) {
     for (int i = 0; i < FACES_PER_PLANET; i++) {
         terrain_face_construct_mesh(&planet->terrain_faces[i]);
     }
-};
+}
 
 f32 pitch = 0, yaw = -90.0f;
 f32 last_x = 400, last_y = 300;
@@ -159,7 +161,7 @@ static void mouse_callback(GLFWwindow *window, double x_position, double y_posit
     pitch = CLAMP(pitch, -89.0f, 89.0f);
 }
 
-static GLFWwindow *create_window() {
+static GLFWwindow *create_window(void) {
     if (glfwInit() != GLFW_TRUE) {
         fprintf(stderr, "Failed to initialize GLFW!\n");
         exit(EXIT_FAILURE);
@@ -173,6 +175,94 @@ static GLFWwindow *create_window() {
     glfwSetCursorPosCallback(window, mouse_callback);
 
     return window;
+}
+
+typedef struct {
+    pipeline pipeline;
+
+    VkBuffer vertex_buffer;
+    VkDeviceMemory vertex_buffer_memory;
+} TextRenderer;
+
+static TextRenderer text_renderer_create(context *context) {
+    pipeline_builder builder = pipeline_builder_new(context);
+    pipeline_builder_set_shaders(&builder, "shaders/text.vert.spv", "shaders/text.frag.spv");
+    pipeline_builder_add_input_binding(&builder, 0, sizeof(vec2s) * 2, VK_VERTEX_INPUT_RATE_VERTEX);
+    pipeline_builder_add_input_attribute(&builder, 0, 0, VK_FORMAT_R32G32_SFLOAT, 0);
+    pipeline_builder_add_input_attribute(&builder, 0, 1, VK_FORMAT_R32G32_SFLOAT, sizeof(vec2s));
+    pipeline_builder_set_cull_mode(&builder, VK_CULL_MODE_NONE);
+    pipeline_builder_set_alpha_blending(&builder, true);
+
+    return (TextRenderer){
+        .pipeline = pipeline_builder_build(&builder, context->render_pass),
+    };
+}
+
+static void text_renderer_destroy(TextRenderer *renderer, device *render_device) {
+    vkDestroyBuffer(render_device->logical_device, renderer->vertex_buffer, NULL);
+    vkFreeMemory(render_device->logical_device, renderer->vertex_buffer_memory, NULL);
+
+    pipeline_destroy(&renderer->pipeline, render_device);
+}
+
+static void text_renderer_setup_buffers(TextRenderer *renderer, context *render_context) {
+    VkDeviceSize vertex_buffer_size = sizeof(vec2s) * 2 * 3;
+
+    VkBuffer vertex_staging_buffer;
+    VkDeviceMemory vertex_staging_buffer_memory;
+
+    context_create_buffer(render_context,
+                          vertex_buffer_size,
+                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                          &vertex_staging_buffer,
+                          &vertex_staging_buffer_memory);
+
+    context_create_buffer(render_context,
+                          vertex_buffer_size,
+                          VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                          &renderer->vertex_buffer,
+                          &renderer->vertex_buffer_memory);
+
+    void *vertex_staging_buffer_memory_mapped;
+    vkMapMemory(render_context->device.logical_device,
+                vertex_staging_buffer_memory,
+                0,
+                vertex_buffer_size,
+                0,
+                &vertex_staging_buffer_memory_mapped);
+
+    vec2s buf[] = {
+        {{-0.5, 0}},
+        {{0, 0}},
+        {{0, -0.5}},
+        {{0.5, 0}},
+        {{0.5, 0}},
+        {{1, 1}},
+    };
+
+    memcpy((void *)((u64)vertex_staging_buffer_memory_mapped), buf, sizeof(buf));
+
+    context_copy_buffer(render_context,
+                        vertex_staging_buffer,
+                        renderer->vertex_buffer,
+                        vertex_buffer_size);
+
+    vkDestroyBuffer(render_context->device.logical_device, vertex_staging_buffer, NULL);
+    vkFreeMemory(render_context->device.logical_device, vertex_staging_buffer_memory, NULL);
+}
+
+static void text_renderer_render(TextRenderer *renderer,
+                                 u32 current_frame,
+                                 VkCommandBuffer command_buffer) {
+    pipeline_bind(&renderer->pipeline, command_buffer, current_frame);
+
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(command_buffer, 0, 1, &renderer->vertex_buffer, offsets);
+
+    vkCmdDraw(command_buffer, 3, 1, 0, 0);
 }
 
 typedef struct {
@@ -192,15 +282,21 @@ static ColoredRectangleRenderer colored_rectangle_renderer_create(context *rende
                                  "shaders/ui.frag.spv");
     pipeline_builder_add_input_binding(&ui_pipeline_builder,
                                        0,
-                                       sizeof(vec2s),
+                                       sizeof(vec2s) * 2,
                                        VK_VERTEX_INPUT_RATE_VERTEX);
     pipeline_builder_add_input_attribute(&ui_pipeline_builder, 0, 0, VK_FORMAT_R32G32_SFLOAT, 0);
+    pipeline_builder_add_input_attribute(&ui_pipeline_builder,
+                                         0,
+                                         1,
+                                         VK_FORMAT_R32G32_SFLOAT,
+                                         sizeof(vec2s));
     pipeline_builder_add_input_binding(&ui_pipeline_builder,
                                        1,
                                        sizeof(vec3s),
                                        VK_VERTEX_INPUT_RATE_INSTANCE);
-    pipeline_builder_add_input_attribute(&ui_pipeline_builder, 1, 1, VK_FORMAT_R32G32B32_SFLOAT, 0);
+    pipeline_builder_add_input_attribute(&ui_pipeline_builder, 1, 2, VK_FORMAT_R32G32B32_SFLOAT, 0);
     pipeline_builder_set_topology(&ui_pipeline_builder, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
+    pipeline_builder_set_alpha_blending(&ui_pipeline_builder, true);
 
     return (ColoredRectangleRenderer){
         .rectangles = darray_create(ColoredRectangle),
@@ -232,7 +328,7 @@ static void colored_rectangle_renderer_add_rectangle(ColoredRectangleRenderer *r
 
 static void colored_rectangle_renderer_setup_buffers(ColoredRectangleRenderer *renderer,
                                                      context *render_context) {
-    VkDeviceSize vertex_buffer_size = sizeof(vec2s) * 4 * darray_length(renderer->rectangles);
+    VkDeviceSize vertex_buffer_size = sizeof(vec2s) * 4 * 2 * darray_length(renderer->rectangles);
     VkDeviceSize instance_buffer_size = sizeof(vec3s) * darray_length(renderer->rectangles);
 
     VkBuffer vertex_staging_buffer;
@@ -264,12 +360,18 @@ static void colored_rectangle_renderer_setup_buffers(ColoredRectangleRenderer *r
     for (u32 i = 0; i < darray_length(renderer->rectangles); i++) {
         vec2s buf[] = {
             {{renderer->rectangles[i].aa.x, renderer->rectangles[i].aa.y}},
+            {{0, 0}},
             {{renderer->rectangles[i].aa.x, renderer->rectangles[i].bb.y}},
+            {{0, 1}},
             {{renderer->rectangles[i].bb.x, renderer->rectangles[i].aa.y}},
+            {{1, 0}},
             {{renderer->rectangles[i].bb.x, renderer->rectangles[i].bb.y}},
+            {{1, 1}},
         };
 
-        memcpy(vertex_staging_buffer_memory_mapped + i * sizeof(vec2s), buf, sizeof(buf));
+        memcpy((void *)((u64)vertex_staging_buffer_memory_mapped + i * sizeof(vec2s)),
+               buf,
+               sizeof(buf));
     }
 
     context_copy_buffer(render_context,
@@ -333,20 +435,24 @@ static void colored_rectangle_renderer_render(ColoredRectangleRenderer *renderer
     vkCmdDraw(command_buffer, 4, darray_length(renderer->rectangles), 0, 0);
 }
 
-int main() {
+int main(void) {
     GLFWwindow *window = create_window();
     context render_context = context_new(window);
 
     gltf_root gltf;
     load_gltf_from_file("models/tire.glb", &gltf);
 
-    ColoredRectangleRenderer rectangle_renderer =
-        colored_rectangle_renderer_create(&render_context);
+    struct font font;
+    load_font("fonts/foxus/FOXUS.ttf", &font);
+    // load_font("fonts/unispace/Unispace Rg.otf", &font);
 
-    colored_rectangle_renderer_add_rectangle(&rectangle_renderer,
-                                             (vec2s){{0.1, 0.1}},
-                                             (vec2s){{0.2, 0.2}},
-                                             (vec3s){{1.0, 0.0, 0.0}});
+    // ColoredRectangleRenderer rectangle_renderer =
+    // colored_rectangle_renderer_create(&render_context);
+
+    // colored_rectangle_renderer_add_rectangle(&rectangle_renderer, (vec2s){{0.1, 0.1}},
+    // (vec2s){{0.2, 0.2}}, (vec3s){{1.0, 0.0, 0.0}});
+
+    TextRenderer text_renderer = text_renderer_create(&render_context);
 
     pipeline_builder planet_pipeline_builder = pipeline_builder_new(&render_context);
     pipeline_builder_set_ubo_size(&planet_pipeline_builder, sizeof(UniformBufferObject));
@@ -445,7 +551,8 @@ int main() {
 
     context_copy_buffer(&render_context, index_staging_buffer, index_buffers, index_buffer_size);
 
-    colored_rectangle_renderer_setup_buffers(&rectangle_renderer, &render_context);
+    // colored_rectangle_renderer_setup_buffers(&rectangle_renderer, &render_context);
+    text_renderer_setup_buffers(&text_renderer, &render_context);
 
     context_begin_main_loop(&render_context);
 
@@ -494,9 +601,9 @@ int main() {
                              0);
         }
 
-        colored_rectangle_renderer_render(&rectangle_renderer,
-                                          render_context.current_frame,
-                                          command_buffer);
+        // colored_rectangle_renderer_render(&rectangle_renderer, render_context.current_frame,
+        // command_buffer);
+        text_renderer_render(&text_renderer, render_context.current_frame, command_buffer);
 
         context_end_frame(&render_context);
 
@@ -527,7 +634,8 @@ int main() {
 
     context_end_main_loop(&render_context);
 
-    colored_rectangle_renderer_destroy(&rectangle_renderer, &render_context.device);
+    // colored_rectangle_renderer_destroy(&rectangle_renderer, &render_context.device);
+    text_renderer_destroy(&text_renderer, &render_context.device);
 
     vkDestroyBuffer(render_context.device.logical_device, vertex_staging_buffer, NULL);
     vkFreeMemory(render_context.device.logical_device, vertex_staging_buffer_memory, NULL);

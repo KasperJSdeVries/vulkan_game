@@ -277,7 +277,7 @@ static b8 pick_physical_device(context *context) {
 
         printf("Evaluating device: '%s', index '%u'.\n", properties.deviceName, i);
 
-        queue_family_info queue_info = {};
+        queue_family_info queue_info = {0};
 
         b8 result = physical_device_meets_requirements(physical_devices[i],
                                                        context->surface,

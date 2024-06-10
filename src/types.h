@@ -81,7 +81,9 @@ typedef struct {
     VkVertexInputAttributeDescription *vertex_input_attributes; // darray
 
     u64 ubo_size;
+    VkCullModeFlags cull_mode;
     VkPrimitiveTopology topology;
+    b8 enable_alpha_blending;
 
     VkPushConstantRange *push_constant_ranges; // darray
 } pipeline_builder;
