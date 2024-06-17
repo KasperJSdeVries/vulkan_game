@@ -88,7 +88,9 @@ void _darray_pop_at(void *array, uint64_t index, void *out_value) {
     addr += index * stride;
 
     // copy to output
-    memcpy(out_value, (void *)addr, stride);
+    if (out_value != NULL) {
+        memcpy(out_value, (void *)addr, stride);
+    }
 
     // copy everything after index to up one
     memcpy((void *)addr, (void *)(addr + stride), (length - (index + 1)) * stride);

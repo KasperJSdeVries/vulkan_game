@@ -5,11 +5,11 @@
 #include "gltf.h"
 #include "pipeline.h"
 #include "types.h"
-#include "vulkan/vulkan_core.h"
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <float.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -35,7 +35,7 @@ typedef struct {
     u32 vertex_count;
     vec3s *vertices;
     u32 *indices;
-    u64 triangles_length;
+    u64 index_count;
 } Mesh;
 
 typedef struct {
@@ -82,10 +82,10 @@ static void terrain_face_construct_mesh(TerrainFace *terrain_face) {
 
     terrain_face->mesh.vertices = malloc(terrain_face->mesh.vertex_count * sizeof(vec3s));
 
-    terrain_face->mesh.triangles_length =
+    terrain_face->mesh.index_count =
         (terrain_face->resolution - 1) * (terrain_face->resolution - 1) * 6;
 
-    terrain_face->mesh.indices = malloc(terrain_face->mesh.triangles_length * sizeof(u32));
+    terrain_face->mesh.indices = malloc(terrain_face->mesh.index_count * sizeof(u32));
 
     u32 triangle_index = 0;
     for (int y = 0; y < terrain_face->resolution; y++) {
@@ -118,7 +118,7 @@ static void terrain_face_construct_mesh(TerrainFace *terrain_face) {
 
 static Planet create_planet(void) {
     Planet planet = {0};
-    int resolution = 4;
+    int resolution = 50;
     vec3s directions[] = {
         {{0, 0, 1}},
         {{0, 0, -1}},
@@ -435,6 +435,266 @@ static void colored_rectangle_renderer_render(ColoredRectangleRenderer *renderer
     vkCmdDraw(command_buffer, 4, darray_length(renderer->rectangles), 0, 0);
 }
 
+vec4s calculate_plane(vec3s vertices[3]) {
+    vec3s ab = glms_vec3_sub(vertices[1], vertices[0]);
+    vec3s ac = glms_vec3_sub(vertices[2], vertices[0]);
+    vec3s normal = glms_normalize(glms_vec3_cross(ab, ac));
+    float d = -glms_vec3_dot(normal, vertices[0]);
+    return (vec4s){{normal.x, normal.y, normal.z, d}};
+}
+
+mat4s glms_mat4_add(mat4s m1, mat4s m2) {
+    mat4s dest = {0};
+
+    for (u8 i = 0; i < 4; i++)
+        for (u8 j = 0; j < 4; j++)
+            dest.raw[i][j] = m1.raw[i][j] + m2.raw[i][j];
+
+    return dest;
+}
+
+mat4s calculate_fundamental_error_quadric(vec4s plane) {
+    mat4s quadratic = {0};
+    for (u8 i = 0; i < 4; i++)
+        for (u8 j = 0; j < 4; j++)
+            quadratic.raw[i][j] = plane.raw[i] * plane.raw[j];
+    return quadratic;
+}
+
+void memswap(void *a, void *b, u64 size) {
+    if (a == b || size == 0) {
+        return;
+    }
+
+    u8 buffer[size];
+    memcpy(buffer, a, size);
+    memcpy(a, b, size);
+    memcpy(b, buffer, size);
+}
+
+f32 calculate_cost(mat4s approximate_error, vec3s point) {
+    vec4s v = {{point.x, point.y, point.z, 1.0f}};
+    vec4s F = glms_mat4_mulv(approximate_error, v);
+    return glms_vec4_dot(v, F);
+}
+
+#define SWAP(a, b)                                                                                 \
+    {                                                                                              \
+        typeof(b) temp = a;                                                                        \
+        a = b;                                                                                     \
+        b = temp;                                                                                  \
+    }
+
+struct contraction_target {
+    u32 pair[2];
+    vec3s contracted_vertex;
+    f32 cost;
+};
+
+struct contraction_target target_create(const Mesh *mesh,
+                                        const mat4s *error_quadrics,
+                                        const u32 pair[2]) {
+    struct contraction_target new_target = {.pair[0] = pair[0], .pair[1] = pair[1]};
+
+    mat4s Q = glms_mat4_add(error_quadrics[pair[0]], error_quadrics[pair[1]]);
+
+    mat4s minimum_error_matrix = {
+        .col =
+            {
+                {{Q.m00, Q.m01, Q.m02, 0.0}},
+                {{Q.m01, Q.m11, Q.m12, 0.0}},
+                {{Q.m02, Q.m12, Q.m22, 0.0}},
+                {{Q.m03, Q.m13, Q.m23, 1.0}},
+            },
+    };
+
+    // Check if the matrix is invertible
+    if (fabsf(glms_mat4_det(minimum_error_matrix)) > 1e-6) {
+        minimum_error_matrix = glms_mat4_inv(minimum_error_matrix);
+
+        vec4s result = glms_mat4_mulv(minimum_error_matrix, (vec4s){{0, 0, 0, 1}});
+
+        new_target.contracted_vertex = glms_vec3(result);
+        new_target.cost = calculate_cost(Q, new_target.contracted_vertex);
+    } else {
+        vec3s new_positions[] = {
+            mesh->vertices[pair[0]],
+            mesh->vertices[pair[1]],
+            glms_vec3_scale(glms_vec3_add(mesh->vertices[pair[0]], mesh->vertices[pair[1]]), 0.5),
+        };
+
+        new_target.cost = F32_MAX;
+        new_target.contracted_vertex = mesh->vertices[pair[0]];
+
+        for (u32 j = 0; j < 3; j++) {
+            f32 cost = calculate_cost(Q, new_positions[j]);
+            if (cost < new_target.cost) {
+                new_target.contracted_vertex = new_positions[j];
+                new_target.cost = cost;
+            }
+        }
+    }
+
+    return new_target;
+}
+
+void simplify_mesh(Mesh *mesh, f32 error_limit) {
+    // Initialize error quadrics for each vertex.
+    mat4s error_quadrics[mesh->vertex_count];
+    memset(error_quadrics, 0, sizeof(error_quadrics));
+
+    // Create dynamic array for storing vertex pairs.
+    u32(*pairs)[2] = darray_create(u32[2]);
+
+    // Compute error quadrics for each triangle and identify unique vertex pairs.
+    for (u32 i = 0; i < mesh->index_count; i += 3) {
+        vec3s triangle[3] = {
+            mesh->vertices[mesh->indices[i]],
+            mesh->vertices[mesh->indices[i + 1]],
+            mesh->vertices[mesh->indices[i + 2]],
+        };
+        vec4s p = calculate_plane(triangle);
+        mat4s Kp = calculate_fundamental_error_quadric(p);
+        for (u32 j = 0; j < 3; j++) {
+            // Accumulate error quadric for each vertex of the triangle.
+            error_quadrics[mesh->indices[i + j]] =
+                glms_mat4_add(error_quadrics[mesh->indices[i + j]], Kp);
+
+            // Create a pair of adjacent vertices.
+            u32 pair[2] = {mesh->indices[i + j], mesh->indices[i + ((j + 1) % 3)]};
+            if (pair[0] > pair[1]) {
+                SWAP(pair[0], pair[1]);
+            }
+
+            // Check if the pair is already known.
+            b8 already_known = false;
+            for (u64 k = 0; k < darray_length(pairs); k++) {
+                if (pair[0] == pairs[k][0] && pair[1] == pairs[k][1]) {
+                    already_known = true;
+                    break;
+                }
+            }
+            // Add the pair if it is unique.
+            if (!already_known) {
+                pairs = _darray_push(pairs, &pair);
+            }
+        }
+    }
+
+    // Create contraction targets for each pair.
+    struct contraction_target targets[darray_length(pairs)];
+    for (u64 i = 0; i < darray_length(pairs); i++) {
+        targets[i] = target_create(mesh, error_quadrics, pairs[i]);
+
+        // Maintain min-heap property based on cost.
+        u64 new_index = i;
+        while (new_index > 0 && targets[(new_index - 1) / 2].cost > targets[new_index].cost) {
+            memswap(&targets[(new_index - 1) / 2], &targets[new_index], sizeof(targets[0]));
+            new_index = (new_index - 1) / 2;
+        }
+    }
+
+    u32 vertices_merged = 0;
+
+    // Simplify mesh by contracting vertex pairs with the lowest cost.
+    u64 targets_top = darray_length(pairs) - 1;
+    while (targets[0].cost < error_limit && targets_top > 0) {
+        struct contraction_target target = targets[0];
+        for (u64 i = 0; i < darray_length(pairs); i++) {
+            if (pairs[i][0] == target.pair[0] && pairs[i][1] == target.pair[1]) {
+                darray_pop_at(pairs, i, NULL);
+            }
+        }
+
+        // Replace the top of the heap with the last element.
+        targets[0] = targets[targets_top--];
+
+        // Restore heap property.
+        u64 i = 0;
+        while (i <= targets_top) {
+            u64 smallest = i;
+            u64 left = 2 * i + 1;
+            u64 right = 2 * i + 2;
+
+            if (left <= targets_top && targets[left].cost < targets[smallest].cost) {
+                smallest = left;
+            }
+            if (right <= targets_top && targets[right].cost < targets[smallest].cost) {
+                smallest = right;
+            }
+
+            if (smallest != i) {
+                memswap(&targets[i], &targets[smallest], sizeof(targets[0]));
+                i = smallest;
+            } else {
+                break;
+            }
+        }
+
+        // Output the vertices being merged.
+        vertices_merged++;
+        // printf("Attempting to merge vertices: %d & %d\n", target.pair[0], target.pair[1]);
+
+        // Contract the vertices.
+        mesh->vertices[target.pair[0]] = target.contracted_vertex;
+        if (target.pair[1] != mesh->vertex_count - 1) {
+            mesh->vertices[target.pair[1]] = mesh->vertices[mesh->vertex_count - 1];
+            error_quadrics[target.pair[1]] = error_quadrics[mesh->vertex_count - 1];
+        }
+        mesh->vertex_count--;
+
+        // Update indices to reflect the contraction.
+        for (u32 i = 0; i < mesh->index_count; i++) {
+            if (mesh->indices[i] == mesh->vertex_count) {
+                mesh->indices[i] = target.pair[1];
+            }
+            if (mesh->indices[i] == target.pair[1]) {
+                mesh->indices[i] = target.pair[0];
+            }
+        }
+
+        // Recompute error quadrics for the contracted vertex.
+        mat4s new_quadratics = error_quadrics[target.pair[0]];
+        for (u32 j = 0; j < mesh->index_count; j += 3) {
+            if (mesh->indices[j] == target.pair[0] || mesh->indices[j + 1] == target.pair[0] ||
+                mesh->indices[j + 2] == target.pair[0]) {
+                vec3s triangle[3] = {
+                    mesh->vertices[mesh->indices[j]],
+                    mesh->vertices[mesh->indices[j + 1]],
+                    mesh->vertices[mesh->indices[j + 2]],
+                };
+                vec4s p = calculate_plane(triangle);
+                mat4s Kp = calculate_fundamental_error_quadric(p);
+                new_quadratics = glms_mat4_add(new_quadratics, Kp);
+            }
+        }
+        error_quadrics[target.pair[0]] = new_quadratics;
+
+        // Update contraction targets for affected pairs.
+        for (u32 j = 0; j < darray_length(pairs); j++) {
+            if (pairs[j][0] == target.pair[0] || pairs[j][1] == target.pair[0]) {
+                targets[j] = target_create(mesh, error_quadrics, pairs[j]);
+
+                // Restore heap property.
+                u64 child_index = j;
+                while (child_index > 0) {
+                    u64 parent_index = (child_index - 1) / 2;
+                    if (targets[parent_index].cost > targets[child_index].cost) {
+                        memswap(&targets[parent_index], &targets[child_index], sizeof(targets[0]));
+                        child_index = parent_index;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    printf("merged %d vertices\n", vertices_merged);
+
+    // Clean up dynamic arrays.
+    darray_destroy(pairs);
+}
+
 int main(void) {
     GLFWwindow *window = create_window();
     context render_context = context_new(window);
@@ -473,6 +733,10 @@ int main(void) {
 
     Planet planet = create_planet();
     planet_generate_meshes(&planet);
+
+    for (u32 i = 0; i < 6; i++) {
+        simplify_mesh(&planet.terrain_faces[i].mesh, 0.25);
+    }
 
     VkDeviceSize vertex_buffer_size = sizeof(vec3s) * (planet.terrain_faces[0].mesh.vertex_count);
 
@@ -514,7 +778,7 @@ int main(void) {
                             vertex_buffer_size);
     }
 
-    VkDeviceSize index_buffer_size = sizeof(u32) * planet.terrain_faces[0].mesh.triangles_length;
+    VkDeviceSize index_buffer_size = sizeof(u32) * planet.terrain_faces[0].mesh.index_count;
 
     VkBuffer index_staging_buffer;
     VkDeviceMemory index_staging_buffer_memory;
@@ -593,12 +857,7 @@ int main(void) {
             VkDeviceSize offsets[] = {0};
             vkCmdBindVertexBuffers(command_buffer, 0, 1, buffers, offsets);
 
-            vkCmdDrawIndexed(command_buffer,
-                             planet.terrain_faces[i].mesh.triangles_length,
-                             1,
-                             0,
-                             0,
-                             0);
+            vkCmdDrawIndexed(command_buffer, planet.terrain_faces[i].mesh.index_count, 1, 0, 0, 0);
         }
 
         // colored_rectangle_renderer_render(&rectangle_renderer, render_context.current_frame,

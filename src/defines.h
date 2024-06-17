@@ -1,6 +1,7 @@
 #ifndef DEFINES_H
 #define DEFINES_H
 
+#define CGLM_DEFINE_PRINTS
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
@@ -49,6 +50,9 @@ STATIC_ASSERT(sizeof(b8) == 1, "Expected b8 to be 1 bytes.");
 STATIC_ASSERT(sizeof(b32) == 4, "Expected b32 to be 4 bytes.");
 
 #define CLAMP(value, min, max) (value <= min ? min : (value >= max ? max : value))
+
+#define F32_MIN 1.17549435e-38F
+#define F32_MAX 3.40282347e+38F
 
 #define PI 3.14159265358979323846f
 #define DEG2RAD (PI / 180.0f)
