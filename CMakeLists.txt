@@ -33,6 +33,7 @@ endforeach(GLSL)
 add_custom_target(Shaders DEPENDS ${SPIRV_BINARY_FILES})
 
 set(SOURCES
+    src/camera.c
     src/command_buffer.c
     src/context.c
     src/darray.c

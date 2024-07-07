@@ -1,3 +1,4 @@
+#include "camera.h"
 #include "context.h"
 #include "darray.h"
 #include "defines.h"
@@ -6,10 +7,6 @@
 #include "pipeline.h"
 #include "types.h"
 
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-
-#include <float.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -26,12 +23,6 @@ typedef struct {
 } ColoredRectangle;
 
 typedef struct {
-    mat4s model;
-    mat4s view;
-    mat4s projection;
-} UniformBufferObject;
-
-typedef struct {
     u32 vertex_count;
     vec3s *vertices;
     u32 *indices;
@@ -46,19 +37,11 @@ typedef struct {
     vec3s axis_b;
 } TerrainFace;
 
-typedef struct {
-    vec3s position;
-    vec3s front;
-    vec3s up;
-} Camera;
-
 #define FACES_PER_PLANET 6
 
 typedef struct {
     TerrainFace terrain_faces[FACES_PER_PLANET];
 } Planet;
-
-static void process_input(GLFWwindow *window, Camera *camera, f32 delta_time);
 
 static TerrainFace create_terrain_face(int resolution, vec3s local_up) {
     TerrainFace terrain_face;
@@ -141,26 +124,6 @@ static void planet_generate_meshes(Planet *planet) {
     }
 }
 
-f32 pitch = 0, yaw = -90.0f;
-f32 last_x = 400, last_y = 300;
-static void mouse_callback(GLFWwindow *window, double x_position, double y_position) {
-    (void)window;
-
-    f32 x_offset = x_position - last_x;
-    f32 y_offset = last_y - y_position;
-    last_x = x_position;
-    last_y = y_position;
-
-    const f32 sensitivity = 0.01f;
-    x_offset *= sensitivity;
-    y_offset *= sensitivity;
-
-    yaw += x_offset;
-    pitch += y_offset;
-
-    pitch = CLAMP(pitch, -89.0f, 89.0f);
-}
-
 static GLFWwindow *create_window(void) {
     if (glfwInit() != GLFW_TRUE) {
         fprintf(stderr, "Failed to initialize GLFW!\n");
@@ -172,7 +135,7 @@ static GLFWwindow *create_window(void) {
     GLFWwindow *window = glfwCreateWindow(WIDTH, HEIGHT, "game", NULL, NULL);
 
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-    glfwSetCursorPosCallback(window, mouse_callback);
+    glfwSetCursorPosCallback(window, camera_mouse_callback);
 
     return window;
 }
@@ -734,9 +697,9 @@ int main(void) {
     Planet planet = create_planet();
     planet_generate_meshes(&planet);
 
-    for (u32 i = 0; i < 6; i++) {
-        simplify_mesh(&planet.terrain_faces[i].mesh, 0.25);
-    }
+    // for (u32 i = 0; i < 6; i++) {
+    //     simplify_mesh(&planet.terrain_faces[i].mesh, 0.25);
+    // }
 
     VkDeviceSize vertex_buffer_size = sizeof(vec3s) * (planet.terrain_faces[0].mesh.vertex_count);
 
@@ -820,11 +783,7 @@ int main(void) {
 
     context_begin_main_loop(&render_context);
 
-    Camera camera = {
-        {{0.0, 0.0, 5.0}},
-        {{0.0, 0.0, -1.0}},
-        {{0.0, 1.0, 0.0}},
-    };
+    Camera camera = camera_create((vec3s){{0.0, 0.0, 5.0}});
 
     f32 delta_time;
     f32 last_time = 0.0;
@@ -844,7 +803,7 @@ int main(void) {
 
         glfwPollEvents();
 
-        process_input(window, &camera, delta_time);
+        camera_process_input(window, &camera, delta_time);
 
         VkCommandBuffer command_buffer = context_begin_frame(&render_context);
 
@@ -866,27 +825,7 @@ int main(void) {
 
         context_end_frame(&render_context);
 
-        vec3s direction = {{
-            cos(glm_rad(yaw)) * cos(glm_rad(pitch)),
-            sin(glm_rad(pitch)),
-            sin(glm_rad(yaw)) * cos(glm_rad(pitch)),
-        }};
-        camera.front = glms_vec3_normalize(direction);
-
-        UniformBufferObject ubo = {
-            .model = glms_mat4_identity(),
-            // https://learnopengl.com/Getting-started/Camera
-            .view = glms_lookat(camera.position,
-                                glms_vec3_add(camera.position, camera.front),
-                                camera.up),
-            .projection = glms_perspective(glm_rad(45.0f),
-                                           (float)render_context.framebuffer_width /
-                                               (float)render_context.framebuffer_height,
-                                           0.1f,
-                                           1000.0f),
-        };
-
-        ubo.projection.m11 *= -1;
+        UniformBufferObject ubo = camera_create_ubo(&render_context, camera);
 
         memcpy(planet_pipeline.uniform_buffer_mapped, &ubo, sizeof(ubo));
     }
@@ -915,28 +854,4 @@ int main(void) {
 
     glfwDestroyWindow(window);
     glfwTerminate();
-}
-
-static void process_input(GLFWwindow *window, Camera *camera, f32 delta_time) {
-    const float camera_speed = delta_time * 2.5f;
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-        camera->position =
-            glms_vec3_add(camera->position, glms_vec3_scale(camera->front, camera_speed));
-    }
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-        camera->position =
-            glms_vec3_sub(camera->position, glms_vec3_scale(camera->front, camera_speed));
-    }
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-        camera->position = glms_vec3_sub(
-            camera->position,
-            glms_vec3_scale(glms_vec3_normalize(glms_vec3_cross(camera->front, camera->up)),
-                            camera_speed));
-    }
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-        camera->position = glms_vec3_add(
-            camera->position,
-            glms_vec3_scale(glms_vec3_normalize(glms_vec3_cross(camera->front, camera->up)),
-                            camera_speed));
-    }
 }
