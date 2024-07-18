@@ -83,5 +83,7 @@ int main(void) {
 
     engine_cleanup(engine);
 
+    dlclose(game.handle);
+
     return 0;
 }

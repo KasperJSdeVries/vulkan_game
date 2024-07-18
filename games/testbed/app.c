@@ -746,7 +746,6 @@ int not_main(void) {
 */
 
 void app_init(engine *e) {
-    (void)e;
     s = malloc(sizeof(*s));
     memset(s, 0, sizeof(*s));
 

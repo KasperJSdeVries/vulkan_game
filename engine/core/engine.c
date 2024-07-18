@@ -16,7 +16,7 @@ engine *engine_create(void) {
 
 b8 engine_should_keep_running(engine *e) {
     if (e->window) {
-        return window_should_close(e->window);
+        return !window_should_close(e->window);
     }
 
     return true;
@@ -34,22 +34,33 @@ void engine_update(engine *e) {
     }
 
     for (u32 i = 0; i < darray_length(e->user_systems); i++) {
-        e->user_systems[i].update(delta_time, e->user_systems[i].data);
+        if (e->user_systems[i].update) {
+            e->user_systems[i].update(delta_time, e->user_systems[i].data);
+        }
     }
 
     VkCommandBuffer command_buffer = context_begin_frame(&e->render_context);
 
     for (u32 i = 0; i < darray_length(e->user_systems); i++) {
-        e->user_systems[i].render(e->user_systems[i].data,
-                                  e->render_context.current_frame,
-                                  command_buffer);
+        if (e->user_systems[i].render) {
+            e->user_systems[i].render(e->user_systems[i].data,
+                                      e->render_context.current_frame,
+                                      command_buffer);
+        }
     }
 
     context_end_frame(&e->render_context);
+
+    if (e->window) {
+        window_update(e->window);
+    }
 }
+
 void engine_cleanup(engine *e) {
     for (u32 i = 0; i < darray_length(e->user_systems); i++) {
-        e->user_systems[i].cleanup(e, e->user_systems->data);
+        if (e->user_systems[i].cleanup) {
+            e->user_systems[i].cleanup(e, e->user_systems->data);
+        }
         free(e->user_systems[i].data);
     }
     darray_destroy(e->user_systems);
