@@ -1,11 +1,10 @@
 #include "context.h"
 
 #include "command_buffer.h"
-#include "darray.h"
+#include "containers/darray.h"
 #include "device.h"
 #include "swapchain.h"
 #include "types.h"
-#include "vulkan/vulkan_core.h"
 
 const char *validation_layers[] = {"VK_LAYER_KHRONOS_validation"};
 #define validation_layer_count sizeof(validation_layers) / sizeof(const char *)
@@ -19,7 +18,7 @@ static void destroy_debug_utils_messenger_ext(VkInstance instance,
                                               VkDebugUtilsMessengerEXT debugMessenger,
                                               const VkAllocationCallbacks *pAllocator);
 static void populate_debug_messenger_create_info(VkDebugUtilsMessengerCreateInfoEXT *create_info);
-static const char **get_required_extensions();
+static const char **get_required_extensions(void);
 static i32 find_memory_index(const context *context, u32 type_filter, u32 property_flags);
 static void create_render_pass(context *context);
 

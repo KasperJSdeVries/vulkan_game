@@ -32,20 +32,20 @@ void _darray_pop_at(void *array, uint64_t index, void *out_value);
 #define darray_clone(array) _darray_clone(array);
 
 #define darray_push(array, value)                                                                  \
-    {                                                                                              \
+    do {                                                                                           \
         typeof(value) temp = value;                                                                \
         array = _darray_push(array, &temp);                                                        \
-    }
+    } while (0)
 
 #define darray_pop(array, out_value) _darray_pop(array, out_value)
 
 #define darray_pop_front(array, out_value) _darray_pop_at(array, 0, out_value)
 
 #define darray_insert_at(array, index, value)                                                      \
-    {                                                                                              \
+    do {                                                                                           \
         typeof(value) temp = value;                                                                \
         _darray_insert_at(array, index, &temp);                                                    \
-    }
+    } while (0)
 
 #define darray_pop_at(array, index, out_value) _darray_pop_at(array, index, out_value)
 

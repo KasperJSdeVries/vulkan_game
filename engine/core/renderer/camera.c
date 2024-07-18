@@ -37,9 +37,7 @@ void camera_process_input(GLFWwindow *window, Camera *camera, f32 delta_time) {
 // TODO: make this per-camera
 f32 pitch = 0, yaw = -90.0f;
 f32 last_x = 400, last_y = 300;
-void camera_mouse_callback(GLFWwindow *window, double x_position, double y_position) {
-    (void)window;
-
+void camera_mouse_callback(double x_position, double y_position) {
     f32 x_offset = x_position - last_x;
     f32 y_offset = last_y - y_position;
     last_x = x_position;

@@ -17,7 +17,7 @@ typedef struct {
 } Camera;
 
 Camera camera_create(vec3s position);
-void camera_mouse_callback(GLFWwindow *window, double x_position, double y_position);
+void camera_mouse_callback(double x_position, double y_position);
 void camera_process_input(GLFWwindow *window, Camera *camera, f32 delta_time);
 UniformBufferObject camera_create_ubo(const context *render_context, Camera camera);
 

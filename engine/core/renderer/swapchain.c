@@ -172,7 +172,7 @@ static void create(context *context, u32 width, u32 height, swapchain *swapchain
                                NULL,
                                &swapchain->depth_image));
 
-        VkMemoryRequirements depth_memory_requirements = {};
+        VkMemoryRequirements depth_memory_requirements = {0};
         vkGetImageMemoryRequirements(context->device.logical_device,
                                      swapchain->depth_image,
                                      &depth_memory_requirements);

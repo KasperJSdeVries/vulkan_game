@@ -28,7 +28,7 @@ typedef struct {
     VkPresentModeKHR *present_modes;
 } swapchain_support_info;
 
-typedef struct {
+typedef struct device {
     VkDevice logical_device;
     VkPhysicalDevice physical_device;
     swapchain_support_info swapchain_support;
@@ -43,10 +43,6 @@ typedef struct {
     VkQueue transfer_queue;
 
     VkCommandPool graphics_command_pool;
-
-    VkPhysicalDeviceProperties properties;
-    VkPhysicalDeviceFeatures features;
-    VkPhysicalDeviceMemoryProperties memory;
 
     VkFormat depth_format;
 } device;

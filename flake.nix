@@ -57,6 +57,7 @@
           inherit (self.checks.${system}.pre-commit-check) shellHook;
           packages = with pkgs; [
             cmake-format
+            gdb
           ];
         };
 

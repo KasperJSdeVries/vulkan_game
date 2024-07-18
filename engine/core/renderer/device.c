@@ -1,9 +1,7 @@
 #include "device.h"
 
-#include "darray.h"
+#include "containers/darray.h"
 #include "types.h"
-
-#include "vulkan/vulkan_core.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -110,9 +108,12 @@ void device_new(context *context) {
     };
 #define extension_name_count sizeof(extension_names) / sizeof(const char *)
 
+    VkPhysicalDeviceFeatures features;
+    vkGetPhysicalDeviceFeatures(context->device.physical_device, &features);
+
     VkPhysicalDeviceFeatures device_features = {
-        .samplerAnisotropy = context->device.features.samplerAnisotropy,
-        .fillModeNonSolid = context->device.features.fillModeNonSolid,
+        .samplerAnisotropy = features.samplerAnisotropy,
+        .fillModeNonSolid = features.fillModeNonSolid,
     };
 
     VkDeviceCreateInfo device_create_info = {
@@ -325,10 +326,6 @@ static b8 pick_physical_device(context *context) {
             context->device.present_queue_index = queue_info.present_family_index;
             context->device.transfer_queue_index = queue_info.transfer_family_index;
             context->device.compute_queue_index = queue_info.compute_family_index;
-
-            context->device.properties = properties;
-            context->device.features = features;
-            context->device.memory = memory;
 
             break;
         }

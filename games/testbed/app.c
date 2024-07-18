@@ -1,11 +1,15 @@
-#include "camera.h"
-#include "context.h"
-#include "darray.h"
-#include "defines.h"
-#include "font.h"
-#include "gltf.h"
-#include "pipeline.h"
-#include "types.h"
+#include "system.h"
+#include "text_system.h"
+#include <application.h>
+#include <containers/darray.h>
+#include <defines.h>
+#include <font/font.h>
+#include <parsers/gltf.h>
+#include <renderer/camera.h>
+#include <renderer/context.h>
+#include <renderer/pipeline.h>
+#include <renderer/types.h>
+#include <window.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -15,6 +19,19 @@
 
 #define WIDTH 1280
 #define HEIGHT 720
+
+#ifdef WIN32
+#define MODULE_API __declspec(dllexport)
+#else
+#define MODULE_API
+#endif
+
+#define APP_API(name, ret, ...) MODULE_API ret name(__VA_ARGS__);
+LIST_OF_APP_APIS
+#undef APP_API
+
+static struct state {
+} *s;
 
 typedef struct {
     vec2s aa;
@@ -122,110 +139,6 @@ static void planet_generate_meshes(Planet *planet) {
     for (int i = 0; i < FACES_PER_PLANET; i++) {
         terrain_face_construct_mesh(&planet->terrain_faces[i]);
     }
-}
-
-static GLFWwindow *create_window(void) {
-    if (glfwInit() != GLFW_TRUE) {
-        fprintf(stderr, "Failed to initialize GLFW!\n");
-        exit(EXIT_FAILURE);
-    }
-
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-
-    GLFWwindow *window = glfwCreateWindow(WIDTH, HEIGHT, "game", NULL, NULL);
-
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-    glfwSetCursorPosCallback(window, camera_mouse_callback);
-
-    return window;
-}
-
-typedef struct {
-    pipeline pipeline;
-
-    VkBuffer vertex_buffer;
-    VkDeviceMemory vertex_buffer_memory;
-} TextRenderer;
-
-static TextRenderer text_renderer_create(context *context) {
-    pipeline_builder builder = pipeline_builder_new(context);
-    pipeline_builder_set_shaders(&builder, "shaders/text.vert.spv", "shaders/text.frag.spv");
-    pipeline_builder_add_input_binding(&builder, 0, sizeof(vec2s) * 2, VK_VERTEX_INPUT_RATE_VERTEX);
-    pipeline_builder_add_input_attribute(&builder, 0, 0, VK_FORMAT_R32G32_SFLOAT, 0);
-    pipeline_builder_add_input_attribute(&builder, 0, 1, VK_FORMAT_R32G32_SFLOAT, sizeof(vec2s));
-    pipeline_builder_set_cull_mode(&builder, VK_CULL_MODE_NONE);
-    pipeline_builder_set_alpha_blending(&builder, true);
-
-    return (TextRenderer){
-        .pipeline = pipeline_builder_build(&builder, context->render_pass),
-    };
-}
-
-static void text_renderer_destroy(TextRenderer *renderer, device *render_device) {
-    vkDestroyBuffer(render_device->logical_device, renderer->vertex_buffer, NULL);
-    vkFreeMemory(render_device->logical_device, renderer->vertex_buffer_memory, NULL);
-
-    pipeline_destroy(&renderer->pipeline, render_device);
-}
-
-static void text_renderer_setup_buffers(TextRenderer *renderer, context *render_context) {
-    VkDeviceSize vertex_buffer_size = sizeof(vec2s) * 2 * 3;
-
-    VkBuffer vertex_staging_buffer;
-    VkDeviceMemory vertex_staging_buffer_memory;
-
-    context_create_buffer(render_context,
-                          vertex_buffer_size,
-                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                          &vertex_staging_buffer,
-                          &vertex_staging_buffer_memory);
-
-    context_create_buffer(render_context,
-                          vertex_buffer_size,
-                          VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                          &renderer->vertex_buffer,
-                          &renderer->vertex_buffer_memory);
-
-    void *vertex_staging_buffer_memory_mapped;
-    vkMapMemory(render_context->device.logical_device,
-                vertex_staging_buffer_memory,
-                0,
-                vertex_buffer_size,
-                0,
-                &vertex_staging_buffer_memory_mapped);
-
-    vec2s buf[] = {
-        {{-0.5, 0}},
-        {{0, 0}},
-        {{0, -0.5}},
-        {{0.5, 0}},
-        {{0.5, 0}},
-        {{1, 1}},
-    };
-
-    memcpy((void *)((u64)vertex_staging_buffer_memory_mapped), buf, sizeof(buf));
-
-    context_copy_buffer(render_context,
-                        vertex_staging_buffer,
-                        renderer->vertex_buffer,
-                        vertex_buffer_size);
-
-    vkDestroyBuffer(render_context->device.logical_device, vertex_staging_buffer, NULL);
-    vkFreeMemory(render_context->device.logical_device, vertex_staging_buffer_memory, NULL);
-}
-
-static void text_renderer_render(TextRenderer *renderer,
-                                 u32 current_frame,
-                                 VkCommandBuffer command_buffer) {
-    pipeline_bind(&renderer->pipeline, command_buffer, current_frame);
-
-    VkDeviceSize offsets[] = {0};
-    vkCmdBindVertexBuffers(command_buffer, 0, 1, &renderer->vertex_buffer, offsets);
-
-    vkCmdDraw(command_buffer, 3, 1, 0, 0);
 }
 
 typedef struct {
@@ -658,10 +571,8 @@ void simplify_mesh(Mesh *mesh, f32 error_limit) {
     darray_destroy(pairs);
 }
 
-int main(void) {
-    GLFWwindow *window = create_window();
-    context render_context = context_new(window);
-
+/*
+int not_main(void) {
     gltf_root gltf;
     load_gltf_from_file("models/tire.glb", &gltf);
 
@@ -674,8 +585,6 @@ int main(void) {
 
     // colored_rectangle_renderer_add_rectangle(&rectangle_renderer, (vec2s){{0.1, 0.1}},
     // (vec2s){{0.2, 0.2}}, (vec3s){{1.0, 0.0, 0.0}});
-
-    TextRenderer text_renderer = text_renderer_create(&render_context);
 
     pipeline_builder planet_pipeline_builder = pipeline_builder_new(&render_context);
     pipeline_builder_set_ubo_size(&planet_pipeline_builder, sizeof(UniformBufferObject));
@@ -691,6 +600,7 @@ int main(void) {
     pipeline_builder_set_shaders(&planet_pipeline_builder,
                                  "shaders/simple.vert.spv",
                                  "shaders/simple.frag.spv");
+
     pipeline planet_pipeline =
         pipeline_builder_build(&planet_pipeline_builder, render_context.render_pass);
 
@@ -779,33 +689,16 @@ int main(void) {
     context_copy_buffer(&render_context, index_staging_buffer, index_buffers, index_buffer_size);
 
     // colored_rectangle_renderer_setup_buffers(&rectangle_renderer, &render_context);
-    text_renderer_setup_buffers(&text_renderer, &render_context);
 
-    context_begin_main_loop(&render_context);
 
     Camera camera = camera_create((vec3s){{0.0, 0.0, 5.0}});
 
-    f32 delta_time;
-    f32 last_time = 0.0;
-    f32 last_second = glfwGetTime();
-    u16 frames = 0;
 
     while (!glfwWindowShouldClose(window)) {
-        f32 current_time = glfwGetTime();
-        delta_time = current_time - last_time;
-        last_time = current_time;
-        frames++;
-        if (current_time >= last_second + 1.0f) {
-            printf("%d\n", frames);
-            frames = 0;
-            last_second = current_time;
-        }
-
         glfwPollEvents();
 
         camera_process_input(window, &camera, delta_time);
 
-        VkCommandBuffer command_buffer = context_begin_frame(&render_context);
 
         pipeline_bind(&planet_pipeline, command_buffer, render_context.current_frame);
 
@@ -821,16 +714,13 @@ int main(void) {
 
         // colored_rectangle_renderer_render(&rectangle_renderer, render_context.current_frame,
         // command_buffer);
-        text_renderer_render(&text_renderer, render_context.current_frame, command_buffer);
 
-        context_end_frame(&render_context);
 
         UniformBufferObject ubo = camera_create_ubo(&render_context, camera);
 
         memcpy(planet_pipeline.uniform_buffer_mapped, &ubo, sizeof(ubo));
     }
 
-    context_end_main_loop(&render_context);
 
     // colored_rectangle_renderer_destroy(&rectangle_renderer, &render_context.device);
     text_renderer_destroy(&text_renderer, &render_context.device);
@@ -850,8 +740,34 @@ int main(void) {
     vkFreeMemory(render_context.device.logical_device, index_buffer_memories, NULL);
 
     pipeline_destroy(&planet_pipeline, &render_context.device);
-    context_cleanup(&render_context);
 
-    glfwDestroyWindow(window);
-    glfwTerminate();
+    return 0;
 }
+*/
+
+void app_init(engine *e) {
+    (void)e;
+    s = malloc(sizeof(*s));
+    memset(s, 0, sizeof(*s));
+
+    struct window_create_info window_info = {
+        .width = WIDTH,
+        .height = HEIGHT,
+    };
+
+    window_init(e, window_info);
+    window_set_mouse_pos_callback(e, camera_mouse_callback);
+
+    system_create_info text_system_info = {
+        .init = text_system_init,
+        .cleanup = text_system_cleanup,
+        .render = text_system_render,
+    };
+    engine_add_system(e, text_system_info);
+}
+
+void *app_pre_reload(void) { return s; }
+
+void app_post_reload(void *sp) { s = sp; }
+
+void app_cleanup(void) { free(s); }
